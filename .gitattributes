@@ -1,0 +1,26 @@
+# Normalize line endings so policy XML, Terraform, and shell scripts behave
+# identically on Windows, Linux, and macOS contributors' machines.
+* text=auto eol=lf
+
+# Windows-only scripts must keep CRLF so they run correctly when checked out.
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.vsix binary
+*.zip binary
+
+# Lockfiles are generated; collapse them in diffs and reviews.
+package-lock.json linguist-generated=true -diff
+uv.lock linguist-generated=true -diff
+.terraform.lock.hcl linguist-generated=true -diff
+
+# Beads exports its issue database as JSONL; treat it as generated data.
+.beads/issues.jsonl linguist-generated=true -diff
+.beads/interactions.jsonl linguist-generated=true -diff
