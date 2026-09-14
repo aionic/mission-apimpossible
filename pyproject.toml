@@ -1,0 +1,70 @@
+[project]
+name = "mission-apimpossible"
+version = "1.0.0"
+description = "Reference clients for identity-preserving coding inference through Azure API Management."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+
+dependencies = [
+    # The standard OpenAI SDK. Using it rather than a bespoke client is
+    # deliberate: the gateway contract stays close enough to the native
+    # Responses API that existing tooling works.
+    "openai>=1.60.0",
+    # Human credential acquisition only. Never used to obtain a managed
+    # identity or service principal token in the reference client.
+    "azure-identity>=1.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "mypy>=1.13.0",
+    "ruff>=0.8.0",
+    "jsonschema>=4.23.0",
+    "respx>=0.21.0",
+    "httpx>=0.27.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["examples/python/map_client"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "S", "A", "C4", "RET", "SIM", "ARG"]
+ignore = [
+    "S101", # assert is fine in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["openai.*", "azure.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["examples/python"]
+addopts = "-q --strict-markers"
+markers = [
+    # Live tests need a real deployment, a real tenant, and a real human
+    # identity. They are opt-in and never run in PR CI.
+    "live: requires a deployed environment and interactive Entra sign-in",
+]
