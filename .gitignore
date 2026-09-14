@@ -26,13 +26,14 @@ override.tf.json
 .terraformrc
 terraform.rc
 
-# Environment-specific variable files may contain tenant/subscription/object IDs.
-# Committed examples live in infra/profiles/*.tfvars.example.
+# Environment-specific variable files carry tenant, subscription, and object
+# IDs. Not secrets exactly, but they have no place in a public repository.
+# Only the *.tfvars.example templates are tracked.
+*.tfvars
+*.tfvars.json
 *.auto.tfvars
 *.auto.tfvars.json
-terraform.tfvars
-terraform.tfvars.json
-!infra/profiles/*.tfvars.example
+!*.tfvars.example
 
 # --- Azure Developer CLI ---------------------------------------------------
 .azure/
