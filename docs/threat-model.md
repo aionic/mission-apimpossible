@@ -1,0 +1,279 @@
+# Threat model
+
+Scope: the runtime path from a developer's IDE to the model, plus the
+deployment and telemetry that support it.
+
+Format per threat: **control → implementation → residual risk → verification**.
+
+Residual risk is stated honestly. A threat model with no residual risk is a
+marketing document.
+
+---
+
+## T1 — Stolen Entra token
+
+**Attacker replays a valid access token captured from a developer's machine.**
+
+| | |
+| --- | --- |
+| **Control** | Short token lifetime; Entra Conditional Access; no extension-managed token store |
+| **Implementation** | VS Code owns caching/refresh; the extension calls `getSession` per invocation and persists nothing. Python uses `AzureCliCredential`. No refresh token is ever written by this repository. |
+| **Residual risk** | **HIGH within the token's validity window.** A valid token is a valid token — the gateway cannot distinguish a thief from the user. Per-user quotas bound the damage; they do not prevent it. |
+| **Verification** | Confirm no token appears in settings, workspace state, logs, or telemetry. Confirm `oid` in telemetry attributes the call to the victim, giving investigators a starting point. |
+
+Mitigation belongs at the identity layer: Conditional Access, device
+compliance, token protection, short lifetimes.
+
+---
+
+## T2 — Wrong-tenant token
+
+**Attacker presents a valid token from a different tenant.**
+
+| | |
+| --- | --- |
+| **Control** | `validate-azure-ad-token` with a literal tenant GUID |
+| **Implementation** | `map-tenant-id` named value; Terraform rejects `common`/`organizations` |
+| **Residual risk** | **LOW.** Returns **401**, not 403. Emitting 403 only for tenant mismatch would require reading an *unvalidated* `tid` to choose a status — attacker-controlled data before authentication. |
+| **Verification** | Token from another tenant → 401. |
+
+---
+
+## T3 — Application-only token
+
+**A service principal calls the endpoint, defeating human attribution.**
+
+| | |
+| --- | --- |
+| **Control** | Delegated-identity check |
+| **Implementation** | Reject `idtyp == "app"`; require `scp`, `tid`, `oid`; enforce client-app allowlist |
+| **Residual risk** | **MEDIUM.** Establishes a *delegated* identity, not a person at the keyboard. A service principal that can obtain delegated tokens through a compromised user still passes. |
+| **Verification** | Client-credentials token → 403 `not_delegated_identity`. |
+
+> Note: the check does **not** reject on the presence of a `roles` claim, since
+> humans can hold app roles.
+
+---
+
+## T4 — Header spoofing
+
+**Caller forges `x-user-id` or `x-foundry-request-id` to corrupt attribution.**
+
+| | |
+| --- | --- |
+| **Control** | Scrub identity and gateway-metadata headers before anything reads them |
+| **Implementation** | `security-headers.xml` runs *before* authentication; gateway metadata is generated after validation from claims only |
+| **Residual risk** | **LOW.** `Connection`, `Content-Length`, `Keep-Alive`, `Transfer-Encoding`, and the client-IP part of `X-Forwarded-For` cannot be removed — platform limitation, no identity impact. |
+| **Verification** | Send spoofed headers; confirm attribution is to the real caller and the returned `x-foundry-request-id` is the real backend value. |
+
+---
+
+## T5 — Correlation-ID injection
+
+**Caller supplies a malicious correlation value to poison telemetry.**
+
+| | |
+| --- | --- |
+| **Control** | GUID validation with length bound; replace on failure |
+| **Implementation** | Anchored regex, 36-char check; malformed values replaced, never echoed. Value is telemetry-only. |
+| **Residual risk** | **LOW.** A caller can reuse *another* valid GUID, muddying a search. They gain no authorization, since the ID is never used for authentication, authorization, or routing. |
+| **Verification** | Inject `not-a-guid'; DROP TABLE--`; confirm a fresh GUID is returned and the payload is absent from telemetry. |
+
+---
+
+## T6 — Model enumeration
+
+**Caller probes for other deployments.**
+
+| | |
+| --- | --- |
+| **Control** | Exactly one deployment; policy-level value check |
+| **Implementation** | Single `azurerm_cognitive_deployment`; `map-approved-deployment` comparison; only `POST /responses` exposed — no model-list operation |
+| **Residual risk** | **LOW.** |
+| **Verification** | Request another deployment name → 400 `unapproved_model`. |
+
+---
+
+## T7 — Quota abuse / denial of wallet
+
+**A user drives cost through volume.**
+
+| | |
+| --- | --- |
+| **Control** | Per-user TPM, daily quota, concurrency cap, output-token bound, request size cap |
+| **Implementation** | `llm-token-limit` + `rate-limit-by-key` keyed on `tid:oid` |
+| **Residual risk** | **MEDIUM.** Counters are per-gateway and concurrent requests can **overshoot**. Streaming prompt tokens are always estimated. `Daily` resets at UTC midnight. These bound spend approximately, not exactly. |
+| **Verification** | Exceed TPM → 429 + `Retry-After`. Confirm two users have isolated counters and that token refresh does not reset a counter. **Set an Azure budget alert — the gateway is not a billing control.** |
+
+---
+
+## T8 — Prompt or source-code leakage via telemetry
+
+**Proprietary code reaches logs.**
+
+| | |
+| --- | --- |
+| **Control** | Zero body bytes on all four diagnostic legs; header allowlist; fixed trace messages; Foundry categories restricted |
+| **Implementation** | `azurerm_api_management_diagnostic` with `body_bytes = 0` throughout; `allLogs` never enabled; `RequestResponse`/`Trace` excluded |
+| **Residual risk** | **MEDIUM until verified.** A category name does not prove its contents are payload-free. Automatic exception telemetry is a separate path from request logging. |
+| **Verification** | Canary test at maximum verbosity, including a **rejected** request. Confirm telemetry actually arrived first — an empty result from broken ingestion is not a pass. |
+
+---
+
+## T9 — Server-side response persistence
+
+**Proprietary code is retained by the service.**
+
+| | |
+| --- | --- |
+| **Control** | `store:true` rejected; `store:false` injected when omitted |
+| **Implementation** | Schema `const: false` plus a defensive policy check |
+| **Residual risk** | **MEDIUM.** `store:false` governs *Responses storage* only. It is **not** a claim that Azure OpenAI abuse monitoring retains nothing — that is a separate feature with its own process. |
+| **Verification** | `store:true` → 400. Omitted → confirm `false` forwarded. |
+
+---
+
+## T10 — Unapproved Responses features
+
+**Caller reaches tools, MCP, file inputs, or background execution.**
+
+| | |
+| --- | --- |
+| **Control** | Allowlist schema with `additionalProperties: false` everywhere |
+| **Implementation** | `validate-content` against the committed schema |
+| **Residual risk** | **LOW.** Fails closed on features that did not exist at review time. A URL inside plain text is inert and accepted — nothing fetches it. |
+| **Verification** | `tests/contract/test_request_schema.py` covers each rejected feature. |
+
+---
+
+## T11 — Direct backend bypass ⚠️
+
+**A developer with inference RBAC calls Foundry directly, skipping all
+governance: no quotas, no model allowlist, no `store:false`, no telemetry.**
+
+This is the most consequential threat in the model, and the two patterns treat
+it differently.
+
+### Public pattern
+
+| | |
+| --- | --- |
+| **Control** | **None.** |
+| **Residual risk** | **ACCEPTED AND HIGH.** Anyone holding `Cognitive Services OpenAI User` can bypass the gateway entirely. |
+| **Verification** | The bypass *will* succeed. That is the documented behavior. |
+
+### Private pattern
+
+| | |
+| --- | --- |
+| **Control** | Explicit NSG deny on the Foundry PE subnet; public access disabled |
+| **Implementation** | `private_endpoint_network_policies` enabled (without it the NSG is not evaluated); allow only `snet-apim-integration`; deny `snet-jump` and corporate prefixes; deny-all at 4000 to override `AllowVNetInBound`. Jumpbox NSG mirrors the denial on egress. |
+| **Residual risk** | **LOW, but unverified.** A private endpoint alone would **not** suffice — it is reachable over peering, VPN, and ExpressRoute. DNS is not a boundary either. Someone with subscription-level network write could alter the NSG. |
+| **Verification** | **The central test.** From the jumpbox, with valid inference RBAC, a direct call must fail. Also test from the corporate network and with a manual hostname/IP override. |
+
+---
+
+## T12 — Excessive RBAC
+
+**Inference identities hold more than they need.**
+
+| | |
+| --- | --- |
+| **Control** | Least-privileged built-in role at account scope |
+| **Implementation** | `Cognitive Services OpenAI User` on the account only. Never Owner, Contributor, or Cognitive Services Contributor. APIM and VM identities hold no Cognitive Services role. |
+| **Residual risk** | **MEDIUM.** The role is broader than Responses — it also covers completions, embeddings, images, assistants, and video. A narrower custom role is a documented hardening option, not a default. |
+| **Verification** | Enumerate assignments on the account; confirm no managed identity appears. |
+
+---
+
+## T13 — Terraform state exposure
+
+**State reveals credentials.**
+
+| | |
+| --- | --- |
+| **Control** | No reusable authentication secret in state |
+| **Implementation** | Log Analytics via AzAPI; no APIM subscription resource; Foundry local auth disabled at creation; App Insights connection string is a module-internal output |
+| **Residual risk** | **LOW–MEDIUM.** App Insights connection string *is* in state, classified as a telemetry identifier. Local state is plaintext. Historical state is never retroactively sanitized. |
+| **Verification** | Inspect state field-by-field. Confirm `.gitignore` excludes state, plans, and `.azure`. |
+
+---
+
+## T14 — Jumpbox compromise
+
+**The private test VM is misused.**
+
+| | |
+| --- | --- |
+| **Control** | No public IP; Bastion-only RDP; Entra sign-in; least-privilege VM role; **denied direct model access** |
+| **Implementation** | NSG allows RDP only from the Bastion subnet; `Virtual Machine User Login` (not Administrator); jumpbox subnet explicitly denied at the Foundry PE |
+| **Residual risk** | **MEDIUM, and gate G4 is unresolved.** A bootstrap local account exists until Entra sign-in is confirmed healthy. Source opened in VS Code persists on the VM disk. Bastion's endpoint is public. |
+| **Verification** | Confirm no public IP; confirm the bootstrap account is disabled; confirm direct model access fails from the VM. |
+
+---
+
+## T15 — Supply chain
+
+**A compromised dependency exfiltrates tokens or code.**
+
+| | |
+| --- | --- |
+| **Control** | Pinned versions, committed lockfiles, minimal dependencies, CI secret scanning |
+| **Implementation** | `.terraform.lock.hcl`, `uv.lock`, `package-lock.json` all committed; extension has **zero** runtime dependencies; gitleaks in CI |
+| **Residual risk** | **MEDIUM.** The Python client depends on the OpenAI SDK and azure-identity, which have transitive dependencies. Jumpbox bootstrap installs from vendor sources via winget. |
+| **Verification** | `npm ci` / `uv sync --locked` reproduce exactly; enable Dependabot. |
+
+---
+
+## T16 — Malicious endpoint configuration
+
+**An attacker redirects the client to capture tokens.**
+
+| | |
+| --- | --- |
+| **Control** | Application-scoped setting; HTTPS enforced before a token is attached |
+| **Implementation** | `missionApimpossible.endpoint` is `scope: application`, so a cloned repository **cannot** override it via workspace settings. Python and the extension both validate the scheme before sending. |
+| **Residual risk** | **LOW.** A user who manually configures a hostile endpoint will send a token to it. |
+| **Verification** | Attempt a workspace-level override; confirm it is not honored. Configure an `http://` endpoint; confirm refusal. |
+
+---
+
+## T17 — Public network exposure
+
+**Management surfaces are reachable.**
+
+| | |
+| --- | --- |
+| **Control** | Private pattern disables public access on APIM and Foundry; no all-API subscription; built-in subscription suspended |
+| **Implementation** | AzAPI closure after PE creation, with a single owner for the property |
+| **Residual risk** | **MEDIUM.** APIM Private Link covers the **gateway**, not every management surface. Bastion's endpoint is public. The public pattern is public by definition. |
+| **Verification** | Confirm public gateway access fails after closure; confirm repeated `terraform apply` does not reopen it. |
+
+---
+
+## Summary
+
+| Threat | Public | Private |
+| --- | --- | --- |
+| T1 Stolen token | HIGH | HIGH |
+| T2 Wrong tenant | LOW | LOW |
+| T3 App-only token | MEDIUM | MEDIUM |
+| T4 Header spoofing | LOW | LOW |
+| T5 Correlation injection | LOW | LOW |
+| T6 Model enumeration | LOW | LOW |
+| T7 Denial of wallet | MEDIUM | MEDIUM |
+| T8 Telemetry leakage | MEDIUM* | MEDIUM* |
+| T9 Response persistence | MEDIUM | MEDIUM |
+| T10 Unapproved features | LOW | LOW |
+| **T11 Backend bypass** | **HIGH (accepted)** | **LOW (unverified)** |
+| T12 Excessive RBAC | MEDIUM | MEDIUM |
+| T13 State exposure | LOW–MEDIUM | LOW–MEDIUM |
+| T14 Jumpbox | n/a | MEDIUM (G4 open) |
+| T15 Supply chain | MEDIUM | MEDIUM |
+| T16 Endpoint config | LOW | LOW |
+| T17 Public exposure | MEDIUM | MEDIUM |
+
+\* Until the canary verification is performed against a live deployment.
+
+**No threat above has been verified against a running deployment.** All
+verification steps are pending — tracked as `map-p13`.
