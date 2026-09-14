@@ -1,0 +1,81 @@
+---
+title: Mission APIMpossible - Private deployment pattern
+---
+flowchart LR
+    classDef actor fill:#E8F1FB,stroke:#0F6CBD,stroke-width:2px,color:#0B3B66
+    classDef gateway fill:#E6F4EA,stroke:#107C41,stroke-width:2px,color:#0B3B2E
+    classDef model fill:#F3E8FD,stroke:#8661C5,stroke-width:2px,color:#3B2A5C
+    classDef telemetry fill:#FFF4E5,stroke:#C86A00,stroke-width:2px,color:#5C3A00
+    classDef netctl fill:#FDE7E9,stroke:#C4314B,stroke-width:2px,color:#6B1220
+    classDef optional fill:#F5F5F5,stroke:#616161,stroke-width:2px,color:#212121,stroke-dasharray: 5 4
+
+    DEV["Developer<br/>Microsoft Entra human identity<br/>holds inference RBAC"]:::actor
+
+    subgraph ENT["Enterprise connectivity - NOT provisioned by this sample"]
+        CORP["Corporate network<br/>VPN or ExpressRoute<br/>DNS forwarding to private zones"]:::optional
+    end
+
+    subgraph AZURE["Azure subscription - private pattern"]
+        subgraph VNET["Virtual network - segmented subnets"]
+            subgraph SNBAS["AzureBastionSubnet"]
+                BAS["Azure Bastion Standard<br/>optional, enable_test_access<br/>management plane only"]:::optional
+            end
+
+            subgraph SNJUMP["snet-jump"]
+                VM["Windows jumpbox<br/>optional, enable_test_access<br/>VS Code + Python<br/>no public IP"]:::optional
+            end
+
+            subgraph SNINT["snet-apim-integration - delegated"]
+                INT["APIM outbound VNet integration"]:::gateway
+            end
+
+            subgraph SNPEAPIM["snet-pe-apim"]
+                PEAPIM["Private endpoint<br/>APIM gateway"]:::gateway
+            end
+
+            subgraph SNPEAI["snet-pe-openai - PE network policies ON"]
+                NSG["NSG deny-by-default<br/>ALLOW 443 from snet-apim-integration<br/>DENY 443 from snet-jump<br/>DENY 443 from corporate ranges"]:::netctl
+                PEAI["Private endpoint<br/>Azure OpenAI"]:::model
+            end
+        end
+
+        subgraph APIM["API Management Standard v2"]
+            POL["Policy chain<br/>validate-azure-ad-token single tenant<br/>trusted tid/oid + header scrub<br/>schema + model allowlist<br/>enforce store=false<br/>llm-token-limit per tid:oid<br/>forward ORIGINAL bearer token"]:::gateway
+            APIMID["APIM managed identity<br/>Monitoring Metrics Publisher ONLY"]:::telemetry
+        end
+
+        AOAI["Azure OpenAI<br/>POST /openai/v1/responses<br/>public network access DISABLED<br/>local key auth DISABLED"]:::model
+        MODEL["Approved coding model deployment"]:::model
+
+        subgraph OBS["Observability"]
+            AI["Application Insights<br/>W3C correlation, zero body bytes"]:::telemetry
+            LAW["Log Analytics workspace"]:::telemetry
+        end
+
+        DNS["Private DNS zones<br/>privatelink.azure-api.net<br/>privatelink.openai.azure.com<br/>resolution only, NOT a security control"]:::netctl
+    end
+
+    DEV -->|"RDP over Bastion"| BAS
+    BAS --> VM
+    DEV -.->|"alternative enterprise path"| CORP
+    CORP -.->|"private gateway access"| PEAPIM
+
+    VM -->|"1 - Entra user token<br/>x-correlation-id + traceparent"| PEAPIM
+    PEAPIM --> POL
+    POL --> INT
+    INT -->|"2 - SAME user bearer token<br/>ALLOWED by NSG"| NSG
+    NSG --> PEAI
+    PEAI --> AOAI
+    AOAI -->|"3 - Entra RBAC authorizes the human"| MODEL
+    MODEL -->|"4 - SSE stream, not buffered"| POL
+    POL -->|"5 - x-correlation-id + x-foundry-request-id"| VM
+
+    VM -.->|"X - direct call BLOCKED by NSG<br/>valid RBAC is not enough"| NSG
+    CORP -.->|"X - direct call BLOCKED by NSG"| NSG
+
+    POL -.-> AI
+    APIMID -.-> AI
+    AI --- LAW
+    AOAI -.-> LAW
+    DNS -.-> PEAPIM
+    DNS -.-> PEAI

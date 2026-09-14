@@ -1,0 +1,53 @@
+---
+title: Mission APIMpossible - Public deployment pattern
+---
+flowchart LR
+    classDef actor fill:#E8F1FB,stroke:#0F6CBD,stroke-width:2px,color:#0B3B66
+    classDef gateway fill:#E6F4EA,stroke:#107C41,stroke-width:2px,color:#0B3B2E
+    classDef model fill:#F3E8FD,stroke:#8661C5,stroke-width:2px,color:#3B2A5C
+    classDef telemetry fill:#FFF4E5,stroke:#C86A00,stroke-width:2px,color:#5C3A00
+    classDef risk fill:#FDE7E9,stroke:#C4314B,stroke-width:2px,color:#6B1220,stroke-dasharray: 5 4
+
+    DEV["Developer<br/>Microsoft Entra human identity"]:::actor
+
+    subgraph IDE["Developer workstation"]
+        VSC["VS Code extension<br/>built-in Microsoft auth provider"]:::actor
+        CLI["Python CLI / curl<br/>AzureCliCredential"]:::actor
+    end
+
+    subgraph AZURE["Azure subscription - public pattern"]
+        subgraph APIM["API Management Standard v2 - public gateway"]
+            POL["Policy chain<br/>1 correlation<br/>2 validate-azure-ad-token single tenant<br/>3 trusted tid/oid extraction<br/>4 strip spoofable headers<br/>5 size + schema allowlist<br/>6 model allowlist<br/>7 enforce store=false<br/>8 llm-token-limit per tid:oid<br/>9 forward ORIGINAL bearer token"]:::gateway
+            APIMID["APIM managed identity<br/>Monitoring Metrics Publisher ONLY<br/>never granted model inference"]:::telemetry
+        end
+
+        subgraph AOAI["Azure OpenAI - public endpoint"]
+            RESP["POST /openai/v1/responses<br/>local key auth DISABLED"]:::model
+            MODEL["Approved coding model deployment<br/>single allowlisted deployment"]:::model
+        end
+
+        subgraph OBS["Observability"]
+            AI["Application Insights<br/>W3C correlation<br/>zero body bytes"]:::telemetry
+            LAW["Log Analytics workspace<br/>metadata-only records"]:::telemetry
+        end
+    end
+
+    DEV -->|"signs in"| VSC
+    DEV -->|"signs in"| CLI
+
+    VSC -->|"1 - Entra user token<br/>x-correlation-id + traceparent"| POL
+    CLI -->|"1 - Entra user token<br/>x-correlation-id + traceparent"| POL
+
+    POL -->|"2 - SAME user bearer token<br/>canonical correlation + W3C context"| RESP
+    RESP -->|"3 - Entra RBAC authorizes the human"| MODEL
+    MODEL -->|"4 - SSE stream, not buffered"| POL
+    POL -->|"5 - x-correlation-id + x-foundry-request-id"| VSC
+
+    POL -.->|"metadata only"| AI
+    APIMID -.->|"telemetry ingestion"| AI
+    AI --- LAW
+    RESP -.-> LAW
+
+    BYPASS["RESIDUAL RISK<br/>A developer holding inference RBAC can reach<br/>the public Foundry endpoint directly and skip<br/>all gateway governance.<br/>Accepted for the public sample.<br/>Use the private pattern to prevent it."]:::risk
+    DEV -.->|"direct call is POSSIBLE"| BYPASS
+    BYPASS -.-> RESP
