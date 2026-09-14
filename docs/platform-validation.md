@@ -14,9 +14,88 @@ its evidence class. The classes are deliberately distinct:
 > by this repository. Every row marked *Pending* requires a live run before the
 > corresponding acceptance criterion in
 > [`implementation-plan.md`](implementation-plan.md) may be marked satisfied.
+>
+> **UPDATE 2026-09-14:** the public pattern has now been deployed and verified.
+> See "Deployment findings" below and the per-gate updates. The private
+> pattern remains undeployed.
+
+> **Gates G1–G6 and G9–G11 now carry EMPIRICAL evidence** from a live public
+> deployment on **2026-09-14** (subscription `05322c41…`, region `eastus2`,
+> model `gpt-5.3-codex` 2026-02-24). Rows still marked *Pending* are private-
+> pattern gates (G7 partially, G8) that require the private deployment.
 
 Documentation was reviewed on **2026-09-14**. Re-verify volatile rows against the
 versions pinned in [`versions.md`](versions.md) before deployment.
+
+---
+
+## Deployment findings — things only a real deployment revealed
+
+Six defects passed every offline check (`terraform validate`, policy XML
+well-formedness, 97 unit tests) and still broke the gateway completely. They
+are recorded here because each is a genuine, reusable APIM constraint.
+
+### D1 — Trace metadata values must be non-empty, at creation *and* runtime
+
+The single most expensive finding, because it fails silently in two different
+ways:
+
+| When | Symptom |
+| --- | --- |
+| Fragment creation | A literal `value=""` makes APIM **accept the PUT and never create the fragment**. Terraform reports `404 PolicyFragment not found` while polling — indistinguishable from a race condition. |
+| Request runtime | An expression that **evaluates** to `""` makes the `trace` throw, surfacing as a blanket **HTTP 500** — with no telemetry to diagnose it, because telemetry is the broken thing. |
+
+`failure_category` is empty on every *successful* request, so this fired on the
+happy path. All nullable fields now coalesce to the literal `"none"`,
+documented in [`telemetry.schema.json`](../specs/telemetry.schema.json) as the
+absent marker.
+
+### D2 — `schema-id` resolves a **service-level** schema, not an API-level one
+
+The `validate-content` reference says "a schema that was added to the API
+Management **instance**" and means it literally.
+`azurerm_api_management_api_schema` creates `/apis/{id}/schemas/{id}`, which
+`validate-content` cannot resolve **at any policy scope** — it fails with
+`The schema responses-request does not exist` while the schema is plainly
+visible on the API. The correct resource is
+`azurerm_api_management_global_schema`.
+
+### D3 — A policy fragment cannot contain `<include-fragment>`
+
+Same silent-drop symptom as D1. Verified by controlled experiment: a trivial
+fragment created fine; an otherwise-identical one containing a single
+`<include-fragment>` returned success on PUT and 404 on the follow-up GET.
+Policies can include fragments; only nesting inside a fragment is rejected.
+
+### D4 — Global scope has no `<base/>`, and an empty `<backend/>` never forwards
+
+`<base/>` is rejected at global scope (`Element <base/> is not allowed in
+global context`) because there is no parent to inherit from. But simply
+removing it leaves an empty `<backend/>`, which means *never forward* — every
+request then fails with a 500 that looks like a backend fault. APIM's own
+default global policy contains an explicit `<forward-request />`.
+
+### D5 — The Application Insights logger needs `identity_client_id`
+
+With local authentication disabled on the component (the posture this
+repository argues for), the logger must be told to use the gateway's managed
+identity via `identity_client_id = "SystemAssigned"`. Otherwise APIM attempts
+connection-string ingestion, is refused, and every `trace` throws.
+
+### D6 — `validate-content` needs a declared request representation
+
+Any content type absent from the API definition is treated as *unspecified*.
+Without a `request { representation { content_type = "application/json" } }`
+block on the operation, the policy rejects every request with
+`Unspecified content type application/json is not allowed`.
+
+### Methodology note: policy propagation is not instant
+
+Several intermediate bisection results in this investigation were **wrong**
+because 4-second waits measured stale policy, producing contradictory readings
+that sent the diagnosis down two dead ends. All conclusions above were
+re-derived with 45-second waits between a policy write and the test request.
+Any future policy experiment must do the same.
 
 ---
 
@@ -43,10 +122,15 @@ audiences to make the gate pass.
 
 | Check | Status |
 | --- | --- |
-| Endpoint path and no `api-version` requirement | Documented |
+| Endpoint path and no `api-version` requirement | Documented + **Empirical** |
 | Scope string used by first-party SDK samples | Documented |
-| Actual `aud` claim issued for that scope | **Pending — blocks pinning the APIM audience** |
-| Same `aud` from VS Code and Azure CLI | **Pending** |
+| Actual `aud` claim issued for that scope | **EMPIRICAL — `https://ai.azure.com`** |
+| Same `aud` from VS Code and Azure CLI | Azure CLI **Empirical**; VS Code pending |
+
+> **Confirmed by measurement, and it matters.** A token acquired with scope
+> `https://ai.azure.com/.default` carries `aud = https://ai.azure.com` — the
+> scope has a `/.default` suffix, the audience does **not**. Pinning the scope
+> string as the APIM audience would 401 every request.
 
 ---
 
@@ -71,9 +155,20 @@ humans can hold app roles. Reject app-only tokens specifically.
 
 | Check | Status |
 | --- | --- |
-| Fixed-tenant validation with validated-token output | Documented |
+| Fixed-tenant validation with validated-token output | Documented + **Empirical** |
 | `scp` present only on delegated tokens | Documented |
-| Observed claim set for the VS Code client and Azure CLI client | **Pending — determines the client allowlist** |
+| Observed claim set for the VS Code client and Azure CLI client | **EMPIRICAL for Azure CLI** |
+
+Observed Azure CLI token claims, which validate the whole
+delegated-human design:
+
+| Claim | Value | Consequence |
+| --- | --- | --- |
+| `ver` | `1.0` | Client appears as `appid`, **not** `azp` — the policy's fallback is required, not defensive |
+| `appid` | `04b07795-8ddb-461a-bbee-02f9e1bf7b46` | Azure CLI |
+| `scp` | `user_impersonation` | Delegated user token ✓ |
+| `idtyp` | `user` | Not app-only ✓ |
+| `roles` | *absent* | Confirms rejecting on `roles` would have been wrong |
 
 ---
 
