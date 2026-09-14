@@ -22,7 +22,7 @@ Three decisions here carry real weight:
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -206,21 +206,29 @@ class ResponsesClient:
         self,
         prompt: str,
         *,
+        on_delta: Callable[[str], None],
         instructions: str | None = None,
         max_output_tokens: int = 4096,
         context: RequestContext | None = None,
-    ) -> Iterator[tuple[str, InvocationResult | None]]:
-        """Stream a response.
+    ) -> InvocationResult:
+        """Stream a response, invoking ``on_delta`` as text arrives.
 
-        Yields ``(text_delta, None)`` as output arrives, then exactly one
-        ``("", result)`` when the stream terminates.
+        Returns the final result. Exceptions propagate normally.
 
-        Two things worth knowing about streaming here:
+        A callback rather than a generator, deliberately. An earlier version
+        yielded the final result from a ``finally:`` block, which silently
+        swallowed mid-stream failures: while an exception was propagating the
+        ``yield`` suspended the generator, the caller received an ordinary
+        result and broke out of the loop, and the pending exception - along
+        with ``KeyboardInterrupt`` - was discarded when the generator closed.
+        A failed or cancelled request looked like a successful one and exited
+        zero. This shape removes that whole class of bug.
+
+        Two streaming realities this surfaces rather than hides:
 
         * A mid-stream failure can arrive as an SSE error event under HTTP
           200, so a successful status code does not by itself mean the
-          generation succeeded. The terminal status reflects what actually
-          happened.
+          generation succeeded. The returned status reflects what happened.
         * Usage may never arrive for an interrupted stream. It is reported as
           ``unavailable`` rather than zero.
         """
@@ -241,50 +249,43 @@ class ResponsesClient:
         collected: list[str] = []
         usage_payload: Any = None
 
-        try:
-            for event in raw.parse():
-                event_type = getattr(event, "type", "")
+        # No try/except here. A connection error, timeout, or Ctrl-C must
+        # reach the caller, which decides what to do - and deliberately does
+        # NOT resend, because the backend may already have consumed tokens.
+        for event in raw.parse():
+            event_type = getattr(event, "type", "")
 
-                if event_type == "response.output_text.delta":
-                    delta = getattr(event, "delta", "") or ""
-                    collected.append(delta)
-                    yield delta, None
+            if event_type == "response.output_text.delta":
+                delta = getattr(event, "delta", "") or ""
+                collected.append(delta)
+                on_delta(delta)
 
-                elif event_type == "response.completed":
-                    status = "completed"
-                    response = getattr(event, "response", None)
-                    usage_payload = getattr(response, "usage", None) if response else None
+            elif event_type == "response.completed":
+                status = "completed"
+                response = getattr(event, "response", None)
+                usage_payload = getattr(response, "usage", None) if response else None
 
-                elif event_type == "response.incomplete":
-                    status = "incomplete"
+            elif event_type == "response.incomplete":
+                status = "incomplete"
 
-                elif event_type == "error":
-                    # An error event under HTTP 200. Record it as a terminal
-                    # failure rather than reporting apparent success.
-                    status = "failed"
+            elif event_type == "error":
+                # An error event under HTTP 200. Record it as a terminal
+                # failure rather than reporting apparent success.
+                status = "failed"
 
-        except KeyboardInterrupt:
-            # Cancellation is a normal outcome. Do NOT resend the request:
-            # the backend may already have consumed tokens for it.
-            status = "client_disconnected"
-            raise
-        finally:
-            usage = TokenUsage.from_payload(usage_payload)
-            yield (
-                "",
-                InvocationResult(
-                    correlation_id=correlation_id,
-                    trace_id=ctx.trace_id,
-                    foundry_request_id=foundry_request_id,
-                    model=self._config.model,
-                    status=status,
-                    output_text="".join(collected),
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    total_tokens=usage.total_tokens,
-                    usage_source=usage.source,
-                ),
-            )
+        usage = TokenUsage.from_payload(usage_payload)
+        return InvocationResult(
+            correlation_id=correlation_id,
+            trace_id=ctx.trace_id,
+            foundry_request_id=foundry_request_id,
+            model=self._config.model,
+            status=status,
+            output_text="".join(collected),
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            total_tokens=usage.total_tokens,
+            usage_source=usage.source,
+        )
 
 
 def format_gateway_error(body: str) -> str:

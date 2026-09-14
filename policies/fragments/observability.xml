@@ -12,6 +12,18 @@
     LastError text, backend bodies, backend URLs, resource IDs, or policy
     source.
 
+    INCLUDED FROM THREE PLACES, and all three are necessary:
+      * outbound  - successful calls;
+      * on-error  - validate-azure-ad-token failures and backend errors;
+      * inbound   - immediately before every policy-authored return-response.
+
+    The third is easy to miss. `return-response` CANCELS pipeline execution,
+    so neither outbound nor on-error runs after it. Without an explicit
+    include at each rejection site, gateway-authored rejections - app-only
+    tokens, unapproved clients, unapproved models, store:true - would produce
+    no telemetry at all, and the abuse signals behind those checks would be
+    invisible.
+
     tid and oid are PROTECTED PSEUDONYMOUS IDENTIFIERS. They belong in
     access-controlled logs and are prohibited as metric dimensions because of
     the documented cardinality limits.
@@ -33,7 +45,21 @@
         <metadata name="client_app_id" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-azp&quot;, &quot;&quot;))" />
         <metadata name="model_deployment" value="{{map-approved-deployment}}" />
         <metadata name="operation" value="responses.create" />
-        <metadata name="status_code" value="@(context.Response == null ? &quot;0&quot; : context.Response.StatusCode.ToString())" />
+        <!--
+            Status resolution order matters.
+
+            A policy-authored rejection runs this fragment from INBOUND, where
+            context.Response is still null. The rejecting policy sets
+            'rejected-status' immediately before returning, so that value is
+            preferred; context.Response is used for the normal outbound and
+            on-error paths. Without this, every gateway rejection would be
+            recorded as status 0.
+        -->
+        <metadata name="status_code" value="@{
+            var rejected = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;rejected-status&quot;, &quot;&quot;);
+            if (!string.IsNullOrEmpty(rejected)) { return rejected; }
+            return context.Response == null ? &quot;0&quot; : context.Response.StatusCode.ToString();
+        }" />
         <metadata name="streaming" value="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;is-streaming&quot;, false).ToString())" />
         <metadata name="failure_category" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;failure-category&quot;, &quot;&quot;))" />
         <!--

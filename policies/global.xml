@@ -12,9 +12,18 @@
         <base />
 
         <!-- HTTPS only. There is no scenario where a bearer token should
-             traverse this gateway in cleartext. -->
+             traverse this gateway in cleartext.
+
+             Defence in depth: the API already declares protocols = ["https"],
+             so this should be unreachable. If it ever fires, that is worth
+             knowing about - hence the telemetry, which is also required
+             because return-response cancels the pipeline and outbound never
+             runs. -->
         <choose>
             <when condition="@(context.Request.OriginalUrl.Scheme != &quot;https&quot;)">
+                <set-variable name="failure-category" value="invalid_request" />
+                <set-variable name="rejected-status" value="400" />
+                <include-fragment fragment-id="map-observability" />
                 <return-response>
                     <set-status code="400" reason="Bad Request" />
                     <set-header name="Content-Type" exists-action="override">

@@ -18,6 +18,9 @@
     <choose>
         <when condition="@(!context.Request.Headers.GetValueOrDefault(&quot;Content-Type&quot;, &quot;&quot;).Contains(&quot;application/json&quot;))">
             <set-variable name="failure-category" value="invalid_request" />
+            <set-variable name="rejected-status" value="415" />
+            <!-- return-response cancels the pipeline; emit telemetry here. -->
+            <include-fragment fragment-id="map-observability" />
             <return-response>
                 <set-status code="415" reason="Unsupported Media Type" />
                 <set-header name="Content-Type" exists-action="override">
@@ -46,6 +49,12 @@
         including Responses features that did not exist at review time - fail
         closed instead of passing through.
 
+        schema-ref is REQUIRED, not optional. Terraform uploads the schema
+        nested under components.schemas, so the stored document root is a
+        wrapper object with no JSON Schema keywords. Validating against that
+        root would constrain nothing and the allowlist would silently fail
+        open. The pointer below selects the actual schema.
+
         max-size sits well below the lowest documented APIM ceiling because
         the documented ceilings conflict (gate G7).
     -->
@@ -53,7 +62,11 @@
                       max-size="{{map-max-request-bytes}}"
                       size-exceeded-action="prevent"
                       errors-variable-name="content-validation-errors">
-        <content type="application/json" validate-as="json" action="prevent" schema-id="responses-request" />
+        <content type="application/json"
+                 validate-as="json"
+                 action="prevent"
+                 schema-id="responses-request"
+                 schema-ref="#/components/schemas/responses-request" />
     </validate-content>
 
     <!-- Parse once; keep the body intact for forwarding. -->
@@ -75,6 +88,8 @@
     <choose>
         <when condition="@((string)context.Variables[&quot;requested-model&quot;] != &quot;{{map-approved-deployment}}&quot;)">
             <set-variable name="failure-category" value="unapproved_model" />
+            <set-variable name="rejected-status" value="400" />
+            <include-fragment fragment-id="map-observability" />
             <return-response>
                 <set-status code="400" reason="Bad Request" />
                 <set-header name="Content-Type" exists-action="override">
@@ -120,6 +135,8 @@
     <choose>
         <when condition="@((bool)context.Variables[&quot;store-violation&quot;])">
             <set-variable name="failure-category" value="store_not_permitted" />
+            <set-variable name="rejected-status" value="400" />
+            <include-fragment fragment-id="map-observability" />
             <return-response>
                 <set-status code="400" reason="Bad Request" />
                 <set-header name="Content-Type" exists-action="override">

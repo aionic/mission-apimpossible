@@ -85,6 +85,11 @@
     <choose>
         <when condition="@(!(bool)context.Variables[&quot;is-delegated-human&quot;])">
             <set-variable name="failure-category" value="not_delegated_identity" />
+            <set-variable name="rejected-status" value="403" />
+            <!-- return-response cancels the pipeline, so outbound and
+                 on-error will not run. Emit telemetry here or this rejection
+                 is invisible. -->
+            <include-fragment fragment-id="map-observability" />
             <return-response>
                 <set-status code="403" reason="Forbidden" />
                 <set-header name="Content-Type" exists-action="override">
@@ -125,6 +130,8 @@
     <choose>
         <when condition="@(!(bool)context.Variables[&quot;client-app-allowed&quot;])">
             <set-variable name="failure-category" value="unapproved_client" />
+            <set-variable name="rejected-status" value="403" />
+            <include-fragment fragment-id="map-observability" />
             <return-response>
                 <set-status code="403" reason="Forbidden" />
                 <set-header name="Content-Type" exists-action="override">

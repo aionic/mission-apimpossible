@@ -36,9 +36,19 @@ echo "Correlation ID: ${CORRELATION_ID}" >&2
 echo >&2
 
 # Headers go through a config file on stdin so the token never appears in
-# argv. `-K -` tells curl to read configuration from standard input.
+# argv. `-K -` / `--config -` tells curl to read configuration from standard
+# input.
+#
+# NOTE: curl config files are strictly LINE-ORIENTED. A quoted value cannot
+# span multiple lines, so the request body must be collapsed to a single line
+# before it is interpolated. A multi-line heredoc here produces
+# "config file option '' is unknown" and the request is never sent - which
+# tends to push people back to `-H "Authorization: ..."` on the command line,
+# exactly what this mechanism exists to avoid.
 curl_with_auth() {
-    local body="$1"
+    local body
+    body="$(tr -d '\n' <<<"$1" | sed 's/  */ /g')"
+
     curl --silent --show-error --fail-with-body \
          --config - \
          "${MAP_ENDPOINT}" <<EOF

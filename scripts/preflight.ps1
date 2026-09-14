@@ -106,12 +106,17 @@ if ($SkipAzureChecks) {
 
     # --- Resource providers ------------------------------------------------
     Write-Host "`nResource providers" -ForegroundColor Cyan
+    # Microsoft.Compute is needed by the private profile's optional jumpbox.
+    # Checking it here avoids a mid-apply MissingSubscriptionRegistration
+    # failure that would occur only AFTER Bastion and its public IP have
+    # started billing.
     $required = @(
         'Microsoft.ApiManagement',
         'Microsoft.CognitiveServices',
         'Microsoft.Insights',
         'Microsoft.OperationalInsights',
-        'Microsoft.Network'
+        'Microsoft.Network',
+        'Microsoft.Compute'
     )
     foreach ($rp in $required) {
         try {

@@ -184,62 +184,92 @@ export async function streamResponse(
   const collected: string[] = [];
   let usage: { input_tokens?: number; output_tokens?: number; total_tokens?: number } | undefined;
 
+  /**
+   * Handles one SSE frame.
+   *
+   * Extracted so the read loop and the post-loop flush share identical
+   * behaviour - the trailing frame used to be dropped, and for Responses that
+   * frame is typically `response.completed` carrying usage. Losing it made a
+   * successful call report 'incomplete' with no usage.
+   */
+  const handleFrame = (frame: string): void => {
+    const dataLine = frame.split(/\r?\n/).find((line) => line.startsWith('data:'));
+    if (!dataLine) {
+      return;
+    }
+
+    const payload = dataLine.slice('data:'.length).trim();
+    if (!payload || payload === '[DONE]') {
+      return;
+    }
+
+    try {
+      const event = JSON.parse(payload) as {
+        type?: string;
+        delta?: string;
+        response?: { usage?: typeof usage };
+      };
+
+      switch (event.type) {
+        case 'response.output_text.delta':
+          if (event.delta) {
+            collected.push(event.delta);
+            onDelta(event.delta);
+          }
+          break;
+        case 'response.completed':
+          status = 'completed';
+          usage = event.response?.usage;
+          break;
+        case 'response.incomplete':
+          status = 'incomplete';
+          break;
+        case 'error':
+          // An error event under HTTP 200. Record a terminal failure rather
+          // than reporting apparent success.
+          status = 'failed';
+          break;
+        default:
+          break;
+      }
+    } catch {
+      // A malformed frame is not worth aborting an otherwise good stream.
+    }
+  };
+
+  // SSE frames are separated by a blank line, which the specification permits
+  // to be either LF LF or CRLF CRLF. Splitting on '\n\n' alone would never
+  // match a CRLF-framing gateway or proxy: the buffer would grow without
+  // bound and NO event would ever dispatch, so the call would return empty
+  // output rather than failing visibly.
+  const FRAME_SEPARATOR = /\r?\n\r?\n/;
+
   try {
     for (;;) {
       const { done, value } = await reader.read();
+
       if (done) {
+        // Flush any multi-byte character still held by the decoder, then
+        // process whatever remains. A stream that ends without a trailing
+        // blank line still has a final, meaningful frame in the buffer.
+        buffer += decoder.decode();
+        const remaining = buffer.trim();
+        if (remaining) {
+          for (const frame of remaining.split(FRAME_SEPARATOR)) {
+            handleFrame(frame);
+          }
+        }
         break;
       }
 
       buffer += decoder.decode(value, { stream: true });
 
-      // SSE frames are separated by a blank line.
-      const frames = buffer.split('\n\n');
+      const frames = buffer.split(FRAME_SEPARATOR);
+      // The last element is an incomplete frame; keep it for the next read.
       buffer = frames.pop() ?? '';
 
       for (const frame of frames) {
-        const dataLine = frame.split('\n').find((line) => line.startsWith('data:'));
-        if (!dataLine) {
-          continue;
-        }
-
-        const payload = dataLine.slice('data:'.length).trim();
-        if (!payload || payload === '[DONE]') {
-          continue;
-        }
-
-        try {
-          const event = JSON.parse(payload) as {
-            type?: string;
-            delta?: string;
-            response?: { usage?: typeof usage };
-          };
-
-          switch (event.type) {
-            case 'response.output_text.delta':
-              if (event.delta) {
-                collected.push(event.delta);
-                onDelta(event.delta);
-              }
-              break;
-            case 'response.completed':
-              status = 'completed';
-              usage = event.response?.usage;
-              break;
-            case 'response.incomplete':
-              status = 'incomplete';
-              break;
-            case 'error':
-              // An error event under HTTP 200. Record a terminal failure
-              // rather than reporting apparent success.
-              status = 'failed';
-              break;
-            default:
-              break;
-          }
-        } catch {
-          // A malformed frame is not worth aborting an otherwise good stream.
-        }
+        handleFrame(frame);
       }
     }
   } catch (error) {

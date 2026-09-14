@@ -37,6 +37,11 @@ provider "azurerm" {
 
   # AzureRM 5.x registers no providers by default. Registering only what this
   # stack needs avoids requiring subscription-wide permissions.
+  #
+  # Microsoft.Compute is included because the PRIVATE profile's optional
+  # jumpbox creates virtual machines and extensions. Omitting it meant
+  # jumpbox creation failed mid-apply with MissingSubscriptionRegistration,
+  # after Bastion and its public IP had already been billed.
   resource_provider_registrations = "none"
   resource_providers_to_register = [
     "Microsoft.ApiManagement",
@@ -44,6 +49,7 @@ provider "azurerm" {
     "Microsoft.Insights",
     "Microsoft.OperationalInsights",
     "Microsoft.Network",
+    "Microsoft.Compute",
   ]
 }
 

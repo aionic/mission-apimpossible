@@ -110,17 +110,15 @@ def main() -> int:
         client = ResponsesClient(config)
 
         if args.stream:
-            result = None
-            for delta, final in client.stream(
+            # Callback form: exceptions and Ctrl-C propagate to the handlers
+            # below instead of being swallowed by the streaming machinery.
+            result = client.stream(
                 prompt,
+                on_delta=lambda delta: print(delta, end="", flush=True),
                 instructions=args.instructions,
                 max_output_tokens=args.max_output_tokens,
                 context=context,
-            ):
-                if final is not None:
-                    result = final
-                    break
-                print(delta, end="", flush=True)
+            )
             print()
         else:
             result = client.invoke(

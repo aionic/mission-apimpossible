@@ -177,3 +177,43 @@ def test_all_fragment_references_resolve() -> None:
     for path in policy_files():
         for referenced in re.findall(r'fragment-id="([^"]+)"', path.read_text(encoding="utf-8")):
             assert referenced in available, f"{path.name} references unknown fragment {referenced}"
+
+
+def test_every_return_response_emits_telemetry() -> None:
+    """`return-response` CANCELS the pipeline.
+
+    Neither outbound nor on-error runs after it, so a rejection without an
+    inline observability include produces no telemetry at all - and the abuse
+    signals behind the app-only-token, unapproved-client, unapproved-model and
+    store:true checks would be invisible in Application Insights.
+
+    This regressed once. The fix is only durable if it is enforced.
+    """
+    for path in policy_files():
+        text = policy_body(path)
+        # Split on each rejection site; everything before it in that <when>
+        # must already have emitted telemetry.
+        segments = text.split("<return-response>")
+        for index, segment in enumerate(segments[:-1], start=1):
+            # Look at the tail of the preceding block, where the set-variable
+            # and include-fragment calls live.
+            tail = segment[-600:]
+            assert 'fragment-id="map-observability"' in tail, (
+                f"{path.name}: return-response #{index} is not preceded by a "
+                f"map-observability include, so this rejection emits no telemetry"
+            )
+            assert 'name="rejected-status"' in tail, (
+                f"{path.name}: return-response #{index} does not set "
+                f"rejected-status, so it would be recorded as status 0"
+            )
+
+
+def test_schema_validation_declares_a_pointer() -> None:
+    """Without schema-ref, validate-content checks the wrapper root.
+
+    Terraform uploads the schema nested under components.schemas. Validating
+    against that document's root enforces nothing, so the entire request
+    allowlist would silently fail open.
+    """
+    text = policy_body(POLICY_DIR / "fragments" / "request-validation.xml")
+    assert 'schema-ref="#/components/schemas/responses-request"' in text
