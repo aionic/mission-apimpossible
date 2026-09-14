@@ -34,33 +34,61 @@ class _Event:
             setattr(self, key, value)
 
 
+class _FakeStream:
+    """Stands in for the SDK's Stream, which is a context manager.
+
+    Tracking `closed` lets the tests assert the response is released even when
+    iteration raises - otherwise an aborted stream would leave the underlying
+    HTTP connection open until the traceback was collected.
+    """
+
+    def __init__(self, events: Any) -> None:
+        self._events = events
+        self.closed = False
+
+    def __enter__(self) -> Any:
+        return self._events
+
+    def __exit__(self, *_: Any) -> bool:
+        self.closed = True
+        return False  # never suppress; exceptions must reach the caller
+
+
 class _FakeRawResponse:
     """Stands in for the SDK's raw streaming response."""
 
     def __init__(self, events: Any, headers: dict[str, str]) -> None:
-        self._events = events
+        self.stream = _FakeStream(events)
         self.headers = headers
 
-    def parse(self) -> Any:
-        return self._events
+    def parse(self) -> _FakeStream:
+        return self.stream
 
 
-def _client_yielding(events: Any) -> ResponsesClient:
-    """A client whose transport replays the given event sequence."""
+def _client_yielding(events: Any) -> tuple[ResponsesClient, dict[str, Any]]:
+    """A client whose transport replays the given event sequence.
+
+    Returns the client plus a handle exposing the fake stream, so tests can
+    assert the response was closed.
+    """
     client = ResponsesClient.__new__(ResponsesClient)
     client._config = CONFIG  # type: ignore[attr-defined]
+
+    handle: dict[str, Any] = {}
 
     class _Responses:
         class _WithRaw:
             @staticmethod
             def create(**_: Any) -> _FakeRawResponse:
-                return _FakeRawResponse(
+                raw = _FakeRawResponse(
                     events,
                     {
                         "x-correlation-id": "78e5a796-0f30-472d-8491-ce2d857850ad",
                         "x-foundry-request-id": "foundry-abc",
                     },
                 )
+                handle["raw"] = raw
+                return raw
 
         with_raw_response = _WithRaw()
 
@@ -68,7 +96,7 @@ def _client_yielding(events: Any) -> ResponsesClient:
         responses = _Responses()
 
     client._client = _Inner()  # type: ignore[attr-defined]
-    return client
+    return client, handle
 
 
 def test_successful_stream_returns_result() -> None:
@@ -85,7 +113,8 @@ def test_successful_stream_returns_result() -> None:
     ]
 
     received: list[str] = []
-    result = _client_yielding(events).stream("hi", on_delta=received.append)
+    client, _ = _client_yielding(events)
+    result = client.stream("hi", on_delta=received.append)
 
     assert received == ["Hello ", "world"]
     assert result.output_text == "Hello world"
@@ -103,11 +132,15 @@ def test_midstream_exception_reaches_the_caller() -> None:
         raise ConnectionError("connection reset by peer")
 
     received: list[str] = []
+    client, handle = _client_yielding(events())
     with pytest.raises(ConnectionError, match="connection reset"):
-        _client_yielding(events()).stream("hi", on_delta=received.append)
+        client.stream("hi", on_delta=received.append)
 
     # The caller still saw what arrived before the failure.
     assert received == ["partial"]
+    # And the HTTP response was released rather than left open until the
+    # traceback was collected.
+    assert handle["raw"].stream.closed
 
 
 def test_keyboard_interrupt_reaches_the_caller() -> None:
@@ -121,8 +154,11 @@ def test_keyboard_interrupt_reaches_the_caller() -> None:
         yield _Event("response.output_text.delta", delta="partial")
         raise KeyboardInterrupt
 
+    client, handle = _client_yielding(events())
     with pytest.raises(KeyboardInterrupt):
-        _client_yielding(events()).stream("hi", on_delta=lambda _: None)
+        client.stream("hi", on_delta=lambda _: None)
+
+    assert handle["raw"].stream.closed
 
 
 def test_sse_error_event_under_http_200_is_terminal_failure() -> None:
@@ -132,7 +168,8 @@ def test_sse_error_event_under_http_200_is_terminal_failure() -> None:
         _Event("error"),
     ]
 
-    result = _client_yielding(events).stream("hi", on_delta=lambda _: None)
+    client, _ = _client_yielding(events)
+    result = client.stream("hi", on_delta=lambda _: None)
 
     assert result.status == "failed"
     assert result.output_text == "partial"
@@ -145,7 +182,8 @@ def test_missing_usage_is_unavailable_not_zero() -> None:
         _Event("response.completed", response=_Event("response", usage=None)),
     ]
 
-    result = _client_yielding(events).stream("hi", on_delta=lambda _: None)
+    client, _ = _client_yielding(events)
+    result = client.stream("hi", on_delta=lambda _: None)
 
     assert result.usage_source == "unavailable"
     assert result.total_tokens is None
@@ -155,7 +193,8 @@ def test_missing_usage_is_unavailable_not_zero() -> None:
 def test_stream_without_completion_event_is_incomplete() -> None:
     events = [_Event("response.output_text.delta", delta="truncated")]
 
-    result = _client_yielding(events).stream("hi", on_delta=lambda _: None)
+    client, _ = _client_yielding(events)
+    result = client.stream("hi", on_delta=lambda _: None)
 
     assert result.status == "incomplete"
     assert result.usage_source == "unavailable"

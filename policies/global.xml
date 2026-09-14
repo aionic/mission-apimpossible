@@ -11,6 +11,15 @@
     <inbound>
         <base />
 
+        <!--
+            Correlation is established at GLOBAL scope, before anything else,
+            so that every rejection - including the one below, which fires
+            before any operation policy runs - can still return and record a
+            valid correlation ID. The operation policy inherits this through
+            its own <base />.
+        -->
+        <include-fragment fragment-id="map-correlation" />
+
         <!-- HTTPS only. There is no scenario where a bearer token should
              traverse this gateway in cleartext.
 

@@ -36,18 +36,28 @@ echo "Correlation ID: ${CORRELATION_ID}" >&2
 echo >&2
 
 # Headers go through a config file on stdin so the token never appears in
-# argv. `-K -` / `--config -` tells curl to read configuration from standard
-# input.
+# argv. `--config -` tells curl to read configuration from standard input.
 #
-# NOTE: curl config files are strictly LINE-ORIENTED. A quoted value cannot
-# span multiple lines, so the request body must be collapsed to a single line
-# before it is interpolated. A multi-line heredoc here produces
-# "config file option '' is unknown" and the request is never sent - which
-# tends to push people back to `-H "Authorization: ..."` on the command line,
-# exactly what this mechanism exists to avoid.
+# TWO separate constraints apply to a curl config file, and getting only one
+# right produces a SILENT failure:
+#
+#   1. It is strictly LINE-ORIENTED. A quoted value cannot span lines, so the
+#      body must be collapsed to a single line.
+#
+#   2. A double-quoted argument terminates at the first unescaped `"` - and a
+#      JSON body is full of them. curl does not warn about this; it simply
+#      truncates and sends the fragment, exits 0, and lets the gateway return
+#      a confusing 400.
+#
+# So the body is collapsed AND escaped. Backslashes are escaped first, then
+# double quotes, or the escaping would corrupt itself.
+#
+# Deliberately NOT done: collapsing runs of whitespace. Indented code is the
+# primary payload this script exists to send, and squeezing spaces would
+# silently rewrite it.
 curl_with_auth() {
     local body
-    body="$(tr -d '\n' <<<"$1" | sed 's/  */ /g')"
+    body="$(printf '%s' "$1" | tr -d '\n' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
 
     curl --silent --show-error --fail-with-body \
          --config - \

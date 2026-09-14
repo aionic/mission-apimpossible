@@ -188,23 +188,47 @@ def test_every_return_response_emits_telemetry() -> None:
     store:true checks would be invisible in Application Insights.
 
     This regressed once. The fix is only durable if it is enforced.
+
+    Implemented by walking the XML rather than by scanning a character window
+    around each match. A window heuristic has two false-negative paths: it can
+    reach past a short preceding rejection block and pass on that block's
+    evidence, and it misses attribute forms such as
+    `<return-response response-variable-name="x">`.
     """
+    from xml.etree import ElementTree  # noqa: S405
+
     for path in policy_files():
-        text = policy_body(path)
-        # Split on each rejection site; everything before it in that <when>
-        # must already have emitted telemetry.
-        segments = text.split("<return-response>")
-        for index, segment in enumerate(segments[:-1], start=1):
-            # Look at the tail of the preceding block, where the set-variable
-            # and include-fragment calls live.
-            tail = segment[-600:]
-            assert 'fragment-id="map-observability"' in tail, (
-                f"{path.name}: return-response #{index} is not preceded by a "
+        tree = ElementTree.parse(path)  # noqa: S314
+        root = tree.getroot()
+
+        # ElementTree has no parent pointers; build them so each
+        # return-response can be checked against its own siblings only.
+        parents = {child: parent for parent in root.iter() for child in parent}
+
+        for element in root.iter("return-response"):
+            parent = parents.get(element)
+            assert parent is not None, f"{path.name}: return-response has no parent"
+
+            siblings = list(parent)
+            preceding = siblings[: siblings.index(element)]
+
+            emits_telemetry = any(
+                sib.tag == "include-fragment" and sib.get("fragment-id") == "map-observability"
+                for sib in preceding
+            )
+            sets_status = any(
+                sib.tag == "set-variable" and sib.get("name") == "rejected-status"
+                for sib in preceding
+            )
+
+            location = f"{path.name}:<{parent.tag}>"
+            assert emits_telemetry, (
+                f"{location}: return-response is not preceded by a "
                 f"map-observability include, so this rejection emits no telemetry"
             )
-            assert 'name="rejected-status"' in tail, (
-                f"{path.name}: return-response #{index} does not set "
-                f"rejected-status, so it would be recorded as status 0"
+            assert sets_status, (
+                f"{location}: return-response does not set rejected-status, "
+                f"so it would be recorded as status 0"
             )
 
 

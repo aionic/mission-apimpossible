@@ -252,26 +252,31 @@ class ResponsesClient:
         # No try/except here. A connection error, timeout, or Ctrl-C must
         # reach the caller, which decides what to do - and deliberately does
         # NOT resend, because the backend may already have consumed tokens.
-        for event in raw.parse():
-            event_type = getattr(event, "type", "")
+        #
+        # The `with` block is what makes that safe: it closes the underlying
+        # HTTP response deterministically when iteration raises, rather than
+        # leaving the connection open until the traceback is released.
+        with raw.parse() as events:
+            for event in events:
+                event_type = getattr(event, "type", "")
 
-            if event_type == "response.output_text.delta":
-                delta = getattr(event, "delta", "") or ""
-                collected.append(delta)
-                on_delta(delta)
+                if event_type == "response.output_text.delta":
+                    delta = getattr(event, "delta", "") or ""
+                    collected.append(delta)
+                    on_delta(delta)
 
-            elif event_type == "response.completed":
-                status = "completed"
-                response = getattr(event, "response", None)
-                usage_payload = getattr(response, "usage", None) if response else None
+                elif event_type == "response.completed":
+                    status = "completed"
+                    response = getattr(event, "response", None)
+                    usage_payload = getattr(response, "usage", None) if response else None
 
-            elif event_type == "response.incomplete":
-                status = "incomplete"
+                elif event_type == "response.incomplete":
+                    status = "incomplete"
 
-            elif event_type == "error":
-                # An error event under HTTP 200. Record it as a terminal
-                # failure rather than reporting apparent success.
-                status = "failed"
+                elif event_type == "error":
+                    # An error event under HTTP 200. Record it as a terminal
+                    # failure rather than reporting apparent success.
+                    status = "failed"
 
         usage = TokenUsage.from_payload(usage_payload)
         return InvocationResult(

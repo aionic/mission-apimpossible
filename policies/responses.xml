@@ -6,8 +6,9 @@
     Inbound order is security-significant and matches the approved sequence in
     docs/implementation-plan.md:
 
-      1. correlation        - first, so every later rejection can still return
-                              a correlation ID
+      1. base               - runs the GLOBAL policy, which establishes
+                              correlation first so that even a global-scope
+                              rejection can return and record a valid ID
       2. security-headers   - scrub spoofable input BEFORE anything reads it
       3. authentication     - validate the human; publish validated claims
       4. request-validation - content type, size, schema, model, store=false
@@ -23,7 +24,6 @@
     <inbound>
         <base />
 
-        <include-fragment fragment-id="map-correlation" />
         <include-fragment fragment-id="map-security-headers" />
         <include-fragment fragment-id="map-authentication" />
         <include-fragment fragment-id="map-request-validation" />

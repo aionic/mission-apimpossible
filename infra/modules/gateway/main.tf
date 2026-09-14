@@ -220,6 +220,14 @@ resource "azurerm_api_management_policy_fragment" "fragments" {
 resource "azurerm_api_management_policy" "global" {
   api_management_id = azurerm_api_management.main.id
   xml_content       = file("${path.module}/../../../policies/global.xml")
+
+  # global.xml includes the observability fragment (its HTTPS rejection uses
+  # return-response, which cancels the pipeline before outbound runs). APIM
+  # validates fragment-id at policy-set time, so without this edge Terraform
+  # would set the policy concurrently with fragment creation and fail
+  # intermittently. It also orders teardown correctly: APIM refuses to delete
+  # a fragment that a policy still references.
+  depends_on = [azurerm_api_management_policy_fragment.fragments]
 }
 
 resource "azurerm_api_management_api_operation_policy" "create_response" {
