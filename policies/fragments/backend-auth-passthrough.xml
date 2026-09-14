@@ -1,0 +1,33 @@
+<!--
+    Fragment: backend-auth  (PASSTHROUGH variant)
+
+    Uploaded as fragment id "map-backend-auth" when identity_mode =
+    "passthrough".
+
+    This fragment deliberately does almost nothing, and that is the point.
+
+    In passthrough mode the developer's original Authorization header is
+    forwarded to Foundry byte-for-byte. Foundry then performs its OWN Entra
+    RBAC check on that same human principal, which is a second, independent
+    authorization decision the gateway cannot weaken by misconfiguration.
+
+    Consequence to understand before choosing this mode: because the human
+    holds inference RBAC on the Foundry resource, a human who can reach the
+    Foundry endpoint can call it directly and skip every gateway control.
+    Preventing that requires network controls (the private profile), and
+    network controls are only as strong as the rules nobody has edited.
+
+    See docs/identity-modes.md for the full comparison.
+-->
+<fragment>
+    <!--
+        No credential policy here, by design. Adding
+        authentication-managed-identity, authentication-basic, or
+        authentication-certificate would replace the caller's identity and
+        silently convert this deployment into brokered mode without any of
+        the RBAC changes that mode requires.
+
+        tests/contract/test_policy_invariants.py enforces that.
+    -->
+    <set-variable name="identity-mode" value="passthrough" />
+</fragment>

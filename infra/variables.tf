@@ -74,8 +74,45 @@ variable "allowed_client_app_ids" {
   default     = []
 }
 
+variable "identity_mode" {
+  description = <<-EOT
+    How the gateway authenticates to Foundry, and therefore who holds inference RBAC.
+
+    "brokered" (default, recommended) - the APIM managed identity holds
+    Cognitive Services OpenAI User and humans hold NOTHING. The gateway
+    replaces the caller's token with its own and carries the validated human
+    oid as user_security_context. This ELIMINATES the direct-backend bypass by
+    capability: a developer cannot call Foundry from any network position
+    because they have no permission. The cost is that Foundry authenticates
+    the gateway rather than the human, so the independent downstream
+    authorization check is lost and APIM becomes a confused deputy.
+
+    "passthrough" - humans hold Cognitive Services OpenAI User and their
+    original token is forwarded unchanged, so Foundry independently authorizes
+    the same human. This preserves true end-to-end identity, but a human who
+    can reach the Foundry endpoint can bypass the gateway entirely, and
+    preventing that then depends on network controls.
+
+    See docs/identity-modes.md. Neither is universally correct.
+  EOT
+
+  type    = string
+  default = "brokered"
+
+  validation {
+    condition     = contains(["brokered", "passthrough"], var.identity_mode)
+    error_message = "identity_mode must be 'brokered' or 'passthrough'."
+  }
+}
+
+variable "backend_mi_resource" {
+  description = "Audience the gateway requests a managed-identity token for in brokered mode. Must match the audience Foundry actually accepts - empirically 'https://ai.azure.com', which is NOT the '/.default' scope string used to request it (gate G1)."
+  type        = string
+  default     = "https://ai.azure.com"
+}
+
 variable "inference_principal_ids" {
-  description = "Entra object IDs (users or groups) that receive 'Cognitive Services OpenAI User' on the Foundry resource. These are the humans who may call the model. This is NOT automatically the deploying principal."
+  description = "Entra object IDs (users or groups) that receive 'Cognitive Services OpenAI User' on the Foundry resource. Used ONLY when identity_mode is 'passthrough'. In brokered mode this MUST be empty - granting it would reintroduce the exact bypass that mode exists to eliminate."
   type        = list(string)
   default     = []
 }

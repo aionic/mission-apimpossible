@@ -138,3 +138,19 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "identity_mode" {
+  description = "'brokered' or 'passthrough'. Selects which backend-auth fragment variant is uploaded."
+  type        = string
+
+  validation {
+    condition     = contains(["brokered", "passthrough"], var.identity_mode)
+    error_message = "identity_mode must be 'brokered' or 'passthrough'."
+  }
+}
+
+variable "backend_mi_resource" {
+  description = "Audience for the managed-identity token in brokered mode."
+  type        = string
+  default     = "https://ai.azure.com"
+}

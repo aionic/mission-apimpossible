@@ -48,10 +48,18 @@ foreach ($file in $policyFiles) {
 }
 
 # --- 2. Fragment references resolve ---------------------------------------
+# backend-auth is the one fragment with two variant files uploaded under a
+# single id, selected by identity_mode. Collapse the suffix so the reference
+# in responses.xml resolves for either mode.
 Write-Host "`nFragment references" -ForegroundColor Cyan
 $fragmentDir = Join-Path $repoRoot 'policies\fragments'
-$availableFragments = Get-ChildItem $fragmentDir -Filter *.xml |
-    ForEach-Object { "map-$($_.BaseName)" }
+$availableFragments = Get-ChildItem $fragmentDir -Filter *.xml | ForEach-Object {
+    $stem = $_.BaseName
+    foreach ($suffix in @('-brokered', '-passthrough')) {
+        if ($stem.EndsWith($suffix)) { $stem = $stem.Substring(0, $stem.Length - $suffix.Length); break }
+    }
+    "map-$stem"
+} | Sort-Object -Unique
 
 foreach ($file in $policyFiles) {
     $content = Get-Content $file.FullName -Raw
@@ -84,18 +92,15 @@ function Get-PolicyBody([string]$Path) {
 $allPolicyText = ($policyFiles | ForEach-Object { Get-PolicyBody $_.FullName }) -join "`n"
 
 $invariants = @(
-    @{ Name = 'no managed-identity authentication to the backend'
-       Pattern = 'authentication-managed-identity'
-       Why = 'would replace the developer token with a service identity, destroying end-to-end human identity' }
     @{ Name = 'no basic authentication'
        Pattern = 'authentication-basic'
        Why = 'this architecture uses no shared credentials' }
     @{ Name = 'no certificate authentication to the backend'
        Pattern = 'authentication-certificate'
        Why = 'would introduce a backend credential distinct from the caller' }
-    @{ Name = 'Authorization header is never overwritten'
+    @{ Name = 'Authorization header is never hand-assembled'
        Pattern = '<set-header\s+name="Authorization"'
-       Why = 'the forwarded token must be byte-identical to the one the developer acquired' }
+       Why = 'brokered mode uses authentication-managed-identity, which is auditable; building the header by hand is not' }
     @{ Name = 'no api-key header injection'
        Pattern = '<set-header\s+name="api-key"[^>]*>\s*<value>'
        Why = 'local key auth is disabled on the backend and no key may be introduced' }
@@ -153,6 +158,38 @@ foreach ($req in $required) {
         Write-Ok $req.Name
     } else {
         Add-Failure "missing requirement: $($req.Name) in $($req.File) -- $($req.Why)"
+    }
+}
+
+# --- 3b. Identity mode is auditable ---------------------------------------
+# authentication-managed-identity is correct in brokered mode and catastrophic
+# anywhere else: it would convert a passthrough deployment into a brokered one
+# without the RBAC changes that mode requires, leaving the bypass open while
+# everything appeared to work. Confining it to one file means you can tell
+# which identity model is deployed by reading which fragment was uploaded.
+Write-Host "`nIdentity mode" -ForegroundColor Cyan
+
+$brokeredFile = Join-Path $fragmentDir 'backend-auth-brokered.xml'
+$passthroughFile = Join-Path $fragmentDir 'backend-auth-passthrough.xml'
+
+if (-not (Test-Path $brokeredFile)) { Add-Failure "backend-auth-brokered.xml is missing" }
+elseif (-not (Test-Path $passthroughFile)) { Add-Failure "backend-auth-passthrough.xml is missing" }
+else {
+    Write-Ok "both backend-auth variants present"
+
+    foreach ($file in $policyFiles) {
+        if ($file.FullName -eq $brokeredFile) { continue }
+        if ((Get-PolicyBody $file.FullName) -match 'authentication-managed-identity') {
+            Add-Failure "$($file.Name) uses authentication-managed-identity; it belongs only in backend-auth-brokered.xml"
+        }
+    }
+    Write-Ok "managed identity confined to the brokered fragment"
+
+    $brokeredText = Get-PolicyBody $brokeredFile
+    if ($brokeredText -match 'user_security_context' -and $brokeredText -match 'claim-oid') {
+        Write-Ok "brokered mode carries the validated human oid as security context"
+    } else {
+        Add-Failure "brokered fragment must carry the validated oid via user_security_context, or the model boundary has no record of who asked"
     }
 }
 

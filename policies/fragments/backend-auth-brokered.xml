@@ -1,0 +1,84 @@
+<!--
+    Fragment: backend-auth  (BROKERED variant)
+
+    Uploaded as fragment id "map-backend-auth" when identity_mode =
+    "brokered". This is the default for both profiles.
+
+    THIS FRAGMENT DELIBERATELY REPLACES THE CALLER'S TOKEN. Read why before
+    changing it.
+
+    In brokered mode the human holds NO RBAC on the Foundry resource. Only
+    the gateway's managed identity does. The bypass is therefore eliminated
+    by CAPABILITY rather than by network topology: a developer cannot call
+    Foundry directly from anywhere - not from the corporate network, not over
+    VPN or ExpressRoute, not by resolving the hostname manually - because
+    they have no permission, and no network position confers one.
+
+    That is strictly stronger than an NSG rule, which is only as good as the
+    last person who edited it.
+
+    WHAT THIS COSTS, stated plainly:
+
+      * Foundry no longer authenticates the human. It authenticates the
+        gateway. The second, independent authorization check that
+        passthrough mode gets for free is gone.
+      * Foundry resource logs attribute every call to one service principal.
+        Human attribution lives in gateway telemetry and in the
+        user_security_context below.
+      * Conditional Access and token lifetime no longer apply at the model
+        boundary; they apply only at the gateway boundary.
+      * APIM becomes a CONFUSED DEPUTY: a permanently privileged caller that
+        will invoke the model for anyone its policy admits. A policy
+        misconfiguration is no longer caught downstream - it is the whole
+        security boundary.
+
+    The human identity is still carried to the model, but as CONTEXT rather
+    than as the authenticating principal. user_security_context is the
+    first-party mechanism for exactly this: Microsoft documents it for
+    "application-mediated architecture ... or AI gateway" scenarios, and
+    recommends passing EndUserId and SourceIP so that SOC analysts can
+    investigate AI alerts involving a gateway.
+
+    See docs/identity-modes.md.
+-->
+<fragment>
+    <set-variable name="identity-mode" value="brokered" />
+
+    <!--
+        Replace the caller's Authorization with a token for the gateway's
+        own managed identity.
+
+        The resource is a named value rather than a literal because the
+        accepted audience must match what Foundry actually issues tokens
+        for - empirically "https://ai.azure.com", NOT the "/.default" scope
+        string used to request it. See gate G1 in
+        docs/platform-validation.md.
+    -->
+    <authentication-managed-identity resource="{{map-backend-mi-resource}}" />
+
+    <!--
+        Carry the validated human identity as security context.
+
+        This runs AFTER schema validation on purpose. The request allowlist
+        sets additionalProperties:false, so injecting this field before
+        validation would make the gateway reject its own addition.
+
+        end_user_id is the validated Entra object ID - a protected
+        pseudonymous identifier, never a UPN, email, or display name.
+        Microsoft's guidance is explicit that sensitive personal information
+        must not be placed in this field.
+    -->
+    <set-variable name="broker-body" value="@(context.Request.Body.As&lt;JObject&gt;(preserveContent: true))" />
+
+    <set-body>@{
+        var body = (JObject)context.Variables["broker-body"];
+
+        var securityContext = new JObject();
+        securityContext["end_user_id"] = context.Variables.GetValueOrDefault&lt;string&gt;("claim-oid", "");
+        securityContext["source_ip"] = context.Request.IpAddress;
+        securityContext["application_name"] = "mission-apimpossible";
+
+        body["user_security_context"] = securityContext;
+        return body.ToString(Newtonsoft.Json.Formatting.None);
+    }</set-body>
+</fragment>

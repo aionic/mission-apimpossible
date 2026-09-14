@@ -70,9 +70,18 @@ module "foundry" {
   model_sku             = var.model_sku
   model_capacity        = var.model_capacity
 
-  inference_principal_ids = var.inference_principal_ids
-  workspace_id            = module.monitoring.workspace_id
-  tags                    = local.base_tags
+  # Exactly one of these takes effect, decided by identity_mode.
+  #
+  # Brokered mode grants the gateway's managed identity and NOTHING to humans,
+  # which is what removes the direct-backend bypass by capability. The module
+  # enforces the exclusivity with a precondition rather than trusting the
+  # caller to keep the two lists consistent.
+  identity_mode           = var.identity_mode
+  broker_principal_id     = var.identity_mode == "brokered" ? module.gateway.principal_id : null
+  inference_principal_ids = var.identity_mode == "passthrough" ? var.inference_principal_ids : []
+
+  workspace_id = module.monitoring.workspace_id
+  tags         = local.base_tags
 }
 
 # ---------------------------------------------------------------------------
@@ -115,6 +124,9 @@ module "gateway" {
   tenant_id              = var.tenant_id
   api_audience           = var.api_audience
   allowed_client_app_ids = var.allowed_client_app_ids
+
+  identity_mode       = var.identity_mode
+  backend_mi_resource = var.backend_mi_resource
 
   foundry_backend_url   = module.foundry.responses_backend_url
   model_deployment_name = module.foundry.model_deployment_name

@@ -37,8 +37,21 @@ api_audience = ""
 # disables the check, which is a weaker posture.
 allowed_client_app_ids = []
 
-# Entra object IDs of the humans (or a group) who may call the model. This is
-# NOT automatically the principal running azd.
+# --- Identity mode -----------------------------------------------------------
+# brokered (default): the APIM managed identity holds inference RBAC and humans
+# hold NONE, which eliminates the direct-backend bypass by capability rather
+# than by network topology.
+#
+# passthrough: humans hold the role and their token is forwarded unchanged, so
+# Foundry independently authorizes the same human. True end-to-end identity,
+# but the bypass is then only preventable by network controls.
+#
+# See docs/identity-modes.md - neither is universally correct.
+identity_mode = "brokered"
+
+# ONLY used when identity_mode = "passthrough". Must be empty in brokered mode;
+# granting humans the role would restore the bypass while everything continued
+# to look like it was working.
 inference_principal_ids = []
 
 # --- Model -----------------------------------------------------------------

@@ -49,8 +49,24 @@ variable "model_capacity" {
   type        = number
 }
 
+variable "identity_mode" {
+  description = "'brokered' (gateway MI holds inference RBAC) or 'passthrough' (humans do)."
+  type        = string
+
+  validation {
+    condition     = contains(["brokered", "passthrough"], var.identity_mode)
+    error_message = "identity_mode must be 'brokered' or 'passthrough'."
+  }
+}
+
+variable "broker_principal_id" {
+  description = "APIM managed identity principal ID. Receives inference RBAC in brokered mode. Null in passthrough mode."
+  type        = string
+  default     = null
+}
+
 variable "inference_principal_ids" {
-  description = "Entra object IDs receiving Cognitive Services OpenAI User at account scope."
+  description = "Entra object IDs receiving Cognitive Services OpenAI User at account scope. Passthrough mode only; must be empty in brokered mode."
   type        = list(string)
   default     = []
 }

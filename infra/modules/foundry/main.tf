@@ -85,7 +85,13 @@ resource "azurerm_cognitive_deployment" "model" {
 }
 
 # ---------------------------------------------------------------------------
-# Human inference RBAC
+# Inference RBAC
+#
+# Exactly one principal type holds inference permission, decided by
+# identity_mode. The two are mutually exclusive by construction, and a
+# precondition enforces it: granting humans the role in brokered mode would
+# silently reintroduce the direct-backend bypass that mode exists to
+# eliminate, while the gateway kept working and nothing would look wrong.
 #
 # "Cognitive Services OpenAI User" is the least-privileged BUILT-IN role that
 # includes Microsoft.CognitiveServices/accounts/OpenAI/responses/*. It does
@@ -100,12 +106,46 @@ resource "azurerm_cognitive_deployment" "model" {
 # Scoped to the account, never the resource group or subscription. Owner and
 # Contributor are never assigned for inference.
 # ---------------------------------------------------------------------------
+resource "terraform_data" "rbac_mode_guard" {
+  lifecycle {
+    precondition {
+      condition     = var.identity_mode == "passthrough" || length(var.inference_principal_ids) == 0
+      error_message = <<-EOT
+        identity_mode is "brokered" but inference_principal_ids is not empty.
+
+        In brokered mode the gateway's managed identity holds inference RBAC
+        and humans hold nothing - that is what removes the direct-backend
+        bypass. Granting humans the role as well would restore the bypass
+        while everything continued to appear to work.
+
+        Either clear inference_principal_ids, or set
+        identity_mode = "passthrough" if you intend end-to-end human identity
+        with network-based bypass controls instead.
+      EOT
+    }
+  }
+}
+
+# passthrough: the humans who may call the model.
 resource "azurerm_role_assignment" "inference_users" {
-  for_each = toset(var.inference_principal_ids)
+  for_each = var.identity_mode == "passthrough" ? toset(var.inference_principal_ids) : toset([])
 
   scope                = azurerm_cognitive_account.openai.id
   role_definition_name = "Cognitive Services OpenAI User"
   principal_id         = each.value
+
+  depends_on = [terraform_data.rbac_mode_guard]
+}
+
+# brokered: the gateway, and only the gateway.
+resource "azurerm_role_assignment" "inference_broker" {
+  count = var.identity_mode == "brokered" && var.broker_principal_id != null ? 1 : 0
+
+  scope                = azurerm_cognitive_account.openai.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = var.broker_principal_id
+
+  depends_on = [terraform_data.rbac_mode_guard]
 }
 
 # ---------------------------------------------------------------------------

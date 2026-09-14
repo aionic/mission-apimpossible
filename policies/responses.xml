@@ -76,6 +76,22 @@
         <include-fragment fragment-id="map-token-governance" />
 
         <!--
+            Backend authentication. The uploaded content of this fragment
+            differs by identity_mode:
+
+              passthrough - a no-op; the caller's original Authorization is
+                            forwarded unchanged and Foundry authorizes the
+                            human independently.
+              brokered    - replaces the caller's token with the gateway's
+                            managed identity and carries the validated human
+                            oid as user_security_context instead.
+
+            It runs AFTER schema validation because brokered mode adds a
+            field the request allowlist would otherwise reject.
+        -->
+        <include-fragment fragment-id="map-backend-auth" />
+
+        <!--
             Named backend with no credentials attached. Selected explicitly so
             routing is deterministic and so no inherited backend entity can
             introduce backend authorization behind our back.

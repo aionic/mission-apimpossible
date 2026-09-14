@@ -61,18 +61,17 @@ def test_all_policies_are_well_formed_xml() -> None:
     ("pattern", "why"),
     [
         (
-            "authentication-managed-identity",
-            "would replace the developer's token with a service identity, "
-            "destroying end-to-end human identity",
+            "authentication-basic",
+            "this architecture uses no shared credentials",
         ),
-        ("authentication-basic", "this architecture uses no shared credentials"),
         (
             "authentication-certificate",
             "would introduce a backend credential distinct from the caller",
         ),
         (
             r'<set-header\s+name="Authorization"',
-            "the forwarded token must be byte-identical to the one acquired",
+            "the forwarded token must never be hand-assembled; brokered mode "
+            "uses authentication-managed-identity, which is auditable",
         ),
         (
             "semantic-cache",
@@ -84,6 +83,64 @@ def test_all_policies_are_well_formed_xml() -> None:
 )
 def test_forbidden_policy_is_absent(all_policy_text: str, pattern: str, why: str) -> None:
     assert not re.search(pattern, all_policy_text), f"invariant broken: {why}"
+
+
+# --- Identity mode: the one invariant that is mode-scoped ----------------
+
+
+def test_managed_identity_appears_only_in_the_brokered_fragment() -> None:
+    """`authentication-managed-identity` replaces the caller's identity.
+
+    That is correct in brokered mode and catastrophic anywhere else - it would
+    silently convert a passthrough deployment into a brokered one without any
+    of the RBAC changes that mode requires, and the bypass those changes
+    remove would stay open while everything appeared to work.
+
+    Confining it to exactly one file makes the identity model auditable: you
+    can tell which mode a deployment is in by which fragment was uploaded.
+    """
+    brokered = POLICY_DIR / "fragments" / "backend-auth-brokered.xml"
+    assert brokered.exists(), "the brokered backend-auth fragment is missing"
+    assert "authentication-managed-identity" in policy_body(brokered)
+
+    for path in policy_files():
+        if path == brokered:
+            continue
+        assert "authentication-managed-identity" not in policy_body(path), (
+            f"{path.name} uses authentication-managed-identity. It belongs only in "
+            f"backend-auth-brokered.xml, so the identity model stays auditable."
+        )
+
+
+def test_passthrough_fragment_adds_no_credential() -> None:
+    """Passthrough must forward the caller's token untouched.
+
+    Any credential policy here would defeat end-to-end identity while leaving
+    the RBAC model unchanged - the worst of both designs.
+    """
+    text = policy_body(POLICY_DIR / "fragments" / "backend-auth-passthrough.xml")
+    for forbidden in (
+        "authentication-managed-identity",
+        "authentication-basic",
+        "authentication-certificate",
+        "api-key",
+    ):
+        assert forbidden not in text, (
+            f"passthrough backend-auth must not use {forbidden}"
+        )
+
+
+def test_brokered_fragment_carries_human_identity() -> None:
+    """Replacing the token must not mean losing the human.
+
+    Brokered mode gives up Foundry-side authentication of the user, so the
+    validated oid has to travel as security context instead - otherwise the
+    model boundary has no record of who asked.
+    """
+    text = policy_body(POLICY_DIR / "fragments" / "backend-auth-brokered.xml")
+    assert "user_security_context" in text
+    assert "end_user_id" in text
+    assert "claim-oid" in text, "end_user_id must come from the VALIDATED oid claim"
 
 
 def test_no_api_key_injection(all_policy_text: str) -> None:
@@ -172,11 +229,35 @@ def test_metric_dimensions_exclude_object_id() -> None:
 
 
 def test_all_fragment_references_resolve() -> None:
-    available = {f"map-{p.stem}" for p in (POLICY_DIR / "fragments").glob("*.xml")}
+    """Every referenced fragment id must be uploadable.
+
+    Most fragments map 1:1 to a file. `backend-auth` is the exception: two
+    variant files (`-passthrough` and `-brokered`) are uploaded under the
+    single id `map-backend-auth`, whichever one identity_mode selects. That
+    indirection is what keeps responses.xml single-sourced across both
+    identity modes.
+    """
+    available: set[str] = set()
+    for path in (POLICY_DIR / "fragments").glob("*.xml"):
+        stem = path.stem
+        # Collapse "backend-auth-brokered" / "backend-auth-passthrough" to the
+        # id they are actually uploaded under.
+        for suffix in ("-brokered", "-passthrough"):
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
+        available.add(f"map-{stem}")
 
     for path in policy_files():
         for referenced in re.findall(r'fragment-id="([^"]+)"', path.read_text(encoding="utf-8")):
             assert referenced in available, f"{path.name} references unknown fragment {referenced}"
+
+
+def test_both_backend_auth_variants_exist() -> None:
+    """Terraform selects one at apply time; both must be present to select from."""
+    fragments = POLICY_DIR / "fragments"
+    for variant in ("backend-auth-passthrough.xml", "backend-auth-brokered.xml"):
+        assert (fragments / variant).exists(), f"missing backend-auth variant: {variant}"
 
 
 def test_every_return_response_emits_telemetry() -> None:

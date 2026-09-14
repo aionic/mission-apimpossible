@@ -20,7 +20,14 @@ locals {
     "map-max-concurrent-per-user" = tostring(var.max_concurrent_requests_per_user)
     "map-max-request-bytes"       = tostring(var.max_request_bytes)
     "map-backend-timeout-seconds" = tostring(var.backend_timeout_seconds)
+    "map-backend-mi-resource"     = var.backend_mi_resource
   }
+
+  # The backend-auth fragment is uploaded under one stable id, but its CONTENT
+  # is chosen by identity_mode. That keeps responses.xml single-sourced - the
+  # operation policy includes "map-backend-auth" without knowing which mode is
+  # deployed.
+  backend_auth_source = var.identity_mode == "brokered" ? "backend-auth-brokered.xml" : "backend-auth-passthrough.xml"
 
   fragments = {
     "map-correlation"        = "${path.module}/../../../policies/fragments/correlation.xml"
@@ -29,6 +36,7 @@ locals {
     "map-request-validation" = "${path.module}/../../../policies/fragments/request-validation.xml"
     "map-token-governance"   = "${path.module}/../../../policies/fragments/token-governance.xml"
     "map-observability"      = "${path.module}/../../../policies/fragments/observability.xml"
+    "map-backend-auth"       = "${path.module}/../../../policies/fragments/${local.backend_auth_source}"
   }
 }
 

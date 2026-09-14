@@ -23,10 +23,19 @@ api_audience = "" # gate G1: the OBSERVED audience, not a scope string
 
 allowed_client_app_ids = []
 
-# These humans hold Cognitive Services OpenAI User on the Foundry account.
-# They can authenticate to the model - and they still cannot reach it
-# directly, because the NSG on the Foundry private endpoint subnet denies
-# their subnet. That denial is the whole point of this pattern.
+# --- Identity mode -----------------------------------------------------------
+# brokered: the APIM managed identity holds inference RBAC; humans hold NONE.
+#
+# With brokered mode the NSG deny rules below become DEFENCE IN DEPTH rather
+# than the primary anti-bypass control - a developer cannot reach the model
+# from any network position because they have no permission. The private
+# profile's real purpose becomes keeping inference traffic off the public
+# internet, which is a data-exposure control and still worth having.
+#
+# See docs/identity-modes.md.
+identity_mode = "brokered"
+
+# Must be EMPTY in brokered mode.
 inference_principal_ids = []
 
 # --- Model -----------------------------------------------------------------

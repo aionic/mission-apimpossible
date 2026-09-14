@@ -39,12 +39,54 @@ authorizes Alice. Four independent checks on one identity.
 
 | Property | How |
 | --- | --- |
-| End-to-end human identity | Original bearer token forwarded byte-for-byte |
+| Identity-aware inference | Gateway validates the human; the model sees who asked |
 | No secrets | Entra only; local key auth disabled on the model resource |
 | No prompt or source-code logging | Zero body bytes on all four diagnostic legs |
 | No server-side response storage | `store:false` enforced by policy, not by trust |
 | Per-user governance | Token limits keyed on validated `tid:oid`, not a subscription key |
 | Correlation without payloads | One GUID + W3C trace, prompt never leaves the request |
+
+---
+
+## Two identity modes
+
+The sample supports two ways of authenticating to the model. They optimise for
+different threat models, and **neither is universally correct**.
+
+```hcl
+identity_mode = "brokered"      # default
+identity_mode = "passthrough"
+```
+
+**`brokered` (default)** — the gateway's managed identity holds inference RBAC
+and humans hold **none**. The direct-backend bypass is eliminated *by
+capability*: a developer cannot reach the model from any network position,
+because they have no permission. The validated human `oid` travels as
+`user_security_context`, which Microsoft documents for exactly this "AI
+gateway" case.
+
+**`passthrough`** — the developer's token is forwarded byte-for-byte and
+Foundry independently authorizes the same human. True end-to-end identity, four
+checks on one principal — but the human holds RBAC, so preventing the bypass
+falls to network controls.
+
+| | `passthrough` | `brokered` |
+| --- | --- | --- |
+| Bypass risk | Network-controlled, or accepted | **Eliminated by capability**\* |
+| Foundry authenticates | The human | The gateway |
+| Independent checks on identity | 2 | 1 |
+| Conditional Access at model boundary | Applies | Does not |
+| Blast radius of a policy mistake | Contained by Foundry RBAC | Total |
+
+\* **Important precondition.** Removing the account-scope role is not enough —
+a role inherited from subscription or management-group scope can still grant
+`Microsoft.CognitiveServices/*` as a dataAction. We hit exactly this: a
+pre-existing `Foundry User` assignment kept the bypass open while the account
+showed only the gateway identity. Run
+`.\scripts\verify-brokered-identity.ps1 -PrincipalId <oid>` before trusting it.
+
+Full comparison, including the confused-deputy risk brokered mode accepts:
+[`docs/identity-modes.md`](docs/identity-modes.md).
 
 ---
 
@@ -54,7 +96,8 @@ authorizes Alice. Four independent checks on one identity.
 | --- | --- | --- |
 | APIM ingress | Public HTTPS | Private endpoint, public access disabled |
 | Foundry ingress | Public, Entra + RBAC | Private endpoint, public access disabled |
-| Direct Foundry bypass | **Possible** — accepted, documented | **Blocked by NSG** |
+| Direct Foundry bypass | Blocked by `brokered` identity | Blocked by identity **and** network |
+| Inference traffic path | Public internet (TLS) | Stays inside the VNet |
 | Test access | Your workstation | Optional Windows jumpbox + Bastion |
 | Best for | Evaluating the pattern | Enterprise adoption |
 
@@ -67,14 +110,19 @@ the other.
 If a developer holds `Cognitive Services OpenAI User` and the Foundry endpoint
 is reachable, they can call the model directly and skip every gateway control.
 
-The public pattern **does not solve this**, and says so rather than implying
-otherwise.
+There are two ways to stop that, and this repository now implements both:
 
-The private pattern solves it — and note that *a private endpoint alone is not
-enough*. Private endpoints are reachable over peering, VPN, and ExpressRoute
-under the default `AllowVNetInBound` rule, so the control is explicit NSG rules
-that allow only the APIM integration subnet and deny the jumpbox subnet by
-name, even though its user holds valid RBAC. See
+- **Identity** (`identity_mode = "brokered"`, the default) — the human holds no
+  RBAC at all. Strictly stronger, because no network position confers a
+  permission that does not exist.
+- **Network** (`deployment_profile = "private"`) — NSG rules on the Foundry
+  private endpoint. Note that *a private endpoint alone is not enough*: private
+  endpoints are reachable over peering, VPN, and ExpressRoute under the default
+  `AllowVNetInBound` rule, so the control is explicit deny rules.
+
+With brokered mode as the default, the private profile's NSG rules become
+**defence in depth** rather than the primary control, and its real purpose
+becomes keeping inference traffic off the public internet. See
 [`docs/architecture.md`](docs/architecture.md).
 
 ---
