@@ -10,14 +10,28 @@ recorded in [`platform-validation.md`](platform-validation.md).
 | Tool | Pinned | Enforced by | Notes |
 | --- | --- | --- | --- |
 | Terraform | `~> 1.16` | `infra/providers.tf` | `1.11+` is a hard floor: AzAPI write-only `sensitive_body` requires it. |
-| AzureRM provider | `~> 5.5` | `infra/providers.tf` + `.terraform.lock.hcl` | State-read behavior audited at 5.5.0. |
-| AzAPI provider | `~> 2.7` | `infra/providers.tf` + `.terraform.lock.hcl` | Used only for the narrow exceptions listed below. |
+| AzureRM provider | `~> 5.5` (locked **5.5.0**) | `infra/providers.tf` + `.terraform.lock.hcl` | State-read behavior audited at 5.5.0. |
+| AzAPI provider | `~> 2.7` (locked **2.12.0**) | `infra/providers.tf` + `.terraform.lock.hcl` | Used only for the narrow exceptions listed below. |
+| random provider | `~> 3.6` (locked **3.9.1**) | `infra/providers.tf` + `.terraform.lock.hcl` | Jumpbox bootstrap value only. |
 | Azure Developer CLI | `>= 1.33.0` | `scripts/preflight.ps1` | Terraform integration is beta; accepted as tooling risk. |
 | Azure CLI | `>= 2.86.0` | `scripts/preflight.ps1` | Provides the human credential for the Python client. |
 | Node.js | `>= 20.0.0` | `src/vscode/package.json` | Extension build and test host. |
 | Python | `>= 3.12` | `pyproject.toml` | Typed client and offline tests. |
 | uv | `>= 0.8.0` | `scripts/preflight.ps1` | Resolves and locks Python dependencies. |
 | VS Code | `>= 1.90.0` | `src/vscode/package.json` | Minimum with the authentication API surface used. |
+
+Commit `.terraform.lock.hcl`. It is what makes the G9 state-behavior evidence
+reproducible rather than a claim about whichever version happened to resolve.
+
+### AzureRM 5.x schema notes
+
+Verified against the installed provider schema, not from memory:
+
+| Surface | Correct form in 5.5.0 |
+| --- | --- |
+| Diagnostic metrics | `enabled_metric { category = ... }`, not `metric { ... enabled = true }` |
+| App Insights local auth | `local_authentication_enabled = false` |
+| Private DNS VNet link | `private_dns_zone_id`, not `resource_group_name` + `private_dns_zone_name` |
 
 ## Azure API versions
 
