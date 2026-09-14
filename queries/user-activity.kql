@@ -1,0 +1,46 @@
+// ===========================================================================
+// Per-principal activity
+//
+// Answers "how many calls did each Entra principal make?" and "which user
+// generated this model request?".
+//
+// PRIVACY: object_id and tenant_id are PROTECTED PSEUDONYMOUS IDENTIFIERS.
+// They are deliberately not UPNs, email addresses, or display names - the
+// gateway never emits those. Resolving an object ID to a person requires a
+// separate, access-controlled Entra lookup, which is the intended friction.
+//
+// These identifiers live in logs rather than metrics because custom metrics
+// allow only 100 values per dimension and 1,000 active series per namespace,
+// and exceeding those limits SILENTLY DISCARDS data.
+// ===========================================================================
+
+let lookback = 7d;
+traces
+| where timestamp > ago(lookback)
+| where message == "responses.invocation"
+| extend
+    ObjectId        = tostring(customDimensions["object_id"]),
+    TenantId        = tostring(customDimensions["tenant_id"]),
+    ClientAppId     = tostring(customDimensions["client_app_id"]),
+    ModelDeployment = tostring(customDimensions["model_deployment"]),
+    StatusCode      = toint(customDimensions["status_code"]),
+    Streaming       = tostring(customDimensions["streaming"]),
+    FailureCategory = tostring(customDimensions["failure_category"]),
+    DurationMs      = todouble(customDimensions["apim_duration_ms"])
+| where isnotempty(ObjectId)
+| summarize
+    Requests        = count(),
+    Succeeded       = countif(StatusCode >= 200 and StatusCode < 300),
+    ClientErrors    = countif(StatusCode >= 400 and StatusCode < 500),
+    Throttled       = countif(StatusCode == 429),
+    Forbidden       = countif(StatusCode == 403),
+    ServerErrors    = countif(StatusCode >= 500),
+    StreamingCalls  = countif(Streaming == "True"),
+    MedianMs        = percentile(DurationMs, 50),
+    P95Ms           = percentile(DurationMs, 95),
+    DistinctApps    = dcount(ClientAppId),
+    FirstSeen       = min(timestamp),
+    LastSeen        = max(timestamp)
+    by ObjectId, TenantId, ModelDeployment
+| extend SuccessRate = round(100.0 * Succeeded / Requests, 1)
+| order by Requests desc

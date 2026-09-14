@@ -1,0 +1,68 @@
+// ===========================================================================
+// Token consumption
+//
+// READ THIS BEFORE USING THESE NUMBERS FOR ANYTHING FINANCIAL.
+//
+// These figures are operational, not billing-grade:
+//
+//   * For STREAMING requests, prompt tokens are ALWAYS estimated - that is
+//     documented policy behavior and is not affected by configuration.
+//   * Usage may be ABSENT entirely for an interrupted stream. Absent is not
+//     zero, and this query keeps them distinct rather than summing a null to
+//     nothing.
+//   * Gateway counters are per-gateway and concurrent requests can overshoot
+//     a limit.
+//   * Application Insights is explicitly NOT an audit system.
+//
+// Azure Cost Management is the financial source of truth. Use this to spot
+// patterns and outliers, not to bill anyone.
+// ===========================================================================
+
+let lookback = 7d;
+//
+// Metric-based aggregate. Low cardinality by design: model, environment,
+// streaming mode, API - never object ID.
+let tokenMetrics =
+    customMetrics
+    | where timestamp > ago(lookback)
+    | where name has "token"
+    | extend
+        ModelDeployment = tostring(customDimensions["ModelDeployment"]),
+        Environment     = tostring(customDimensions["Environment"]),
+        Streaming       = tostring(customDimensions["Streaming"])
+    | summarize
+        TotalTokens = sum(valueSum),
+        Samples     = sum(valueCount)
+        by bin(timestamp, 1h), name, ModelDeployment, Environment, Streaming;
+//
+// Per-request usage AVAILABILITY from the trace record. This is the honest
+// part: it reports how often usage was reported at all.
+let usageAvailability =
+    traces
+    | where timestamp > ago(lookback)
+    | where message == "responses.invocation"
+    | extend
+        UsageSource     = tostring(customDimensions["usage_source"]),
+        Streaming       = tostring(customDimensions["streaming"]),
+        ObjectId        = tostring(customDimensions["object_id"]),
+        ModelDeployment = tostring(customDimensions["model_deployment"])
+    | summarize
+        Requests           = count(),
+        UsageReported      = countif(UsageSource == "reported"),
+        UsageEstimated     = countif(UsageSource == "estimated"),
+        UsagePartial       = countif(UsageSource == "partial"),
+        UsageUnavailable   = countif(UsageSource == "unavailable")
+        by ModelDeployment, Streaming
+    | extend
+        ReportedPct = round(100.0 * UsageReported / Requests, 1),
+        // If this is high, treat any token total above as a floor rather
+        // than an accurate count.
+        UnknownPct  = round(100.0 * UsageUnavailable / Requests, 1);
+//
+// Hourly token trend.
+tokenMetrics
+| summarize TotalTokens = sum(TotalTokens) by bin(timestamp, 1h), ModelDeployment, Streaming
+| order by timestamp desc
+//
+// Run separately for the accounting-confidence view:
+//   usageAvailability

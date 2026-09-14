@@ -1,0 +1,61 @@
+// ===========================================================================
+// Latency - gateway overhead vs model time
+//
+// READ THE DURATION CAVEAT FIRST.
+//
+// For a STREAMING request, the gateway-measured elapsed time runs until the
+// stream completes or terminates. It is NOT model think time and it is NOT
+// time-to-first-token. Presenting it as either would be wrong, which is why
+// streaming and non-streaming are separated throughout rather than averaged
+// together into a meaningless middle number.
+//
+// The useful signal is the SPLIT: comparing the gateway's frontend request
+// duration against its backend dependency duration tells you whether policy
+// evaluation or the model is responsible for a slow call.
+// ===========================================================================
+
+let lookback = 24h;
+//
+// Correlate the trace record with the gateway's own request telemetry, which
+// carries the authoritative duration.
+let invocations =
+    traces
+    | where timestamp > ago(lookback)
+    | where message == "responses.invocation"
+    | extend
+        TraceId         = operation_Id,
+        ModelDeployment = tostring(customDimensions["model_deployment"]),
+        Streaming       = tostring(customDimensions["streaming"]),
+        StatusCode      = toint(customDimensions["status_code"]),
+        PolicyElapsedMs = todouble(customDimensions["apim_duration_ms"]);
+//
+let frontend =
+    requests
+    | where timestamp > ago(lookback)
+    | project TraceId = operation_Id, FrontendMs = duration, Success = success;
+//
+let backend =
+    dependencies
+    | where timestamp > ago(lookback)
+    | project TraceId = operation_Id, BackendMs = duration, BackendTarget = target;
+//
+invocations
+| join kind=leftouter frontend on TraceId
+| join kind=leftouter backend on TraceId
+| extend GatewayOverheadMs = FrontendMs - coalesce(BackendMs, 0.0)
+| summarize
+    Requests     = count(),
+    P50FrontendMs = percentile(FrontendMs, 50),
+    P95FrontendMs = percentile(FrontendMs, 95),
+    P99FrontendMs = percentile(FrontendMs, 99),
+    P50BackendMs  = percentile(BackendMs, 50),
+    P95BackendMs  = percentile(BackendMs, 95),
+    // If this grows, policy evaluation is the problem, not the model.
+    P95OverheadMs = percentile(GatewayOverheadMs, 95),
+    MaxFrontendMs = max(FrontendMs)
+    by ModelDeployment, Streaming, bin(timestamp, 1h)
+| extend Note = iff(
+    Streaming == "True",
+    "Streaming: duration runs to stream end. NOT time-to-first-token.",
+    "Non-streaming: duration is the full request.")
+| order by timestamp desc

@@ -1,0 +1,53 @@
+// ===========================================================================
+// Throttling - who is hitting limits, and which limit
+//
+// Two distinct outcomes that are easy to confuse:
+//
+//   429  per-user TOKENS-PER-MINUTE exceeded.
+//   403  per-user DAILY QUOTA exceeded  ...  OR a genuine RBAC denial.
+//
+// That ambiguity is real, not an oversight in this query. llm-token-limit
+// natively returns 403 for quota exhaustion, and normalizing it to 429
+// requires proving the policy origin is distinguishable from an authorization
+// failure (gate G5). Until that is proven, blanket-remapping 403 would mask
+// real RBAC denials, so both stay visible here and are reported separately.
+//
+// Also note: 'Daily' is a FIXED UTC CALENDAR DAY, not a rolling 24 hours.
+// Counters reset at UTC midnight, which surprises people in other timezones.
+// ===========================================================================
+
+let lookback = 24h;
+traces
+| where timestamp > ago(lookback)
+| where message == "responses.invocation"
+| extend
+    StatusCode      = toint(customDimensions["status_code"]),
+    FailureCategory = tostring(customDimensions["failure_category"]),
+    ObjectId        = tostring(customDimensions["object_id"]),
+    TenantId        = tostring(customDimensions["tenant_id"]),
+    ModelDeployment = tostring(customDimensions["model_deployment"]),
+    Streaming       = tostring(customDimensions["streaming"])
+| where StatusCode in (429, 403)
+| extend LimitKind = case(
+    StatusCode == 429, "TPM exceeded (rate limit)",
+    StatusCode == 403 and FailureCategory == "quota_exceeded", "Daily quota exceeded",
+    StatusCode == 403, "403 - AMBIGUOUS: daily quota OR missing RBAC. Investigate before assuming throttling.",
+    "unknown")
+| summarize
+    Events          = count(),
+    Requests429     = countif(StatusCode == 429),
+    Requests403     = countif(StatusCode == 403),
+    StreamingShare  = countif(Streaming == "True"),
+    FirstSeen       = min(timestamp),
+    LastSeen        = max(timestamp),
+    // UTC hour matters: the daily counter resets at UTC midnight.
+    PeakUtcHour     = arg_max(count(), bin(timestamp, 1h))
+    by ObjectId, TenantId, ModelDeployment, LimitKind
+| order by Events desc
+//
+// Follow-up worth running when a user appears here repeatedly:
+//
+//   Is this one user making many small calls, or few very large ones?
+//   Concurrent requests can OVERSHOOT a ceiling because counters are
+//   per-gateway, so a user slightly over the limit is not necessarily
+//   misbehaving.

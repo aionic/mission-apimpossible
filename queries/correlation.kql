@@ -1,0 +1,88 @@
+// ===========================================================================
+// Everything about one correlation ID
+//
+// The query a support engineer runs first. A developer reports a correlation
+// ID; this reconstructs the request across the gateway's frontend request,
+// its backend dependency, and the custom trace record.
+//
+// WHAT THIS CAN JOIN:
+//   client correlation ID -> APIM request -> APIM backend dependency
+//                         -> captured Foundry request ID
+//
+// WHAT IT CANNOT:
+//   Anything inside Foundry. The Foundry request ID is a SUPPORT HANDLE for
+//   raising a case with Microsoft - it is not a joinable trace segment, and
+//   no first-party source establishes that it is queryable in your workspace.
+//   The chain ends at the gateway boundary.
+//
+// Contains no prompt, no model output, and no credential. By design there is
+// nothing here to redact.
+// ===========================================================================
+
+let targetCorrelationId = "REPLACE-WITH-CORRELATION-GUID";
+//
+// Custom trace emitted by the observability policy fragment.
+let gatewayTrace =
+    traces
+    | where timestamp > ago(7d)
+    | where customDimensions["correlation_id"] == targetCorrelationId
+    | project
+        timestamp,
+        Source = "gateway-trace",
+        CorrelationId   = tostring(customDimensions["correlation_id"]),
+        TraceId         = operation_Id,
+        GatewayRequestId = tostring(customDimensions["gateway_request_id"]),
+        FoundryRequestId = tostring(customDimensions["foundry_request_id"]),
+        TenantId        = tostring(customDimensions["tenant_id"]),
+        ObjectId        = tostring(customDimensions["object_id"]),
+        ClientAppId     = tostring(customDimensions["client_app_id"]),
+        ModelDeployment = tostring(customDimensions["model_deployment"]),
+        StatusCode      = tostring(customDimensions["status_code"]),
+        Streaming       = tostring(customDimensions["streaming"]),
+        FailureCategory = tostring(customDimensions["failure_category"]),
+        UsageSource     = tostring(customDimensions["usage_source"]),
+        DurationMs      = todouble(customDimensions["apim_duration_ms"]);
+//
+// The gateway's own request telemetry. Provides the authoritative duration
+// and result, which the policy-measured elapsed time does not.
+let gatewayRequest =
+    requests
+    | where timestamp > ago(7d)
+    | where operation_Id in ((gatewayTrace | project TraceId))
+    | project
+        timestamp,
+        Source = "apim-request",
+        TraceId = operation_Id,
+        Name = name,
+        ResultCode = resultCode,
+        DurationMs = duration,
+        Success = success;
+//
+// The backend call. Separating this from the frontend request is what lets
+// you tell "the model was slow" apart from "the gateway was slow".
+let backendDependency =
+    dependencies
+    | where timestamp > ago(7d)
+    | where operation_Id in ((gatewayTrace | project TraceId))
+    | project
+        timestamp,
+        Source = "backend-dependency",
+        TraceId = operation_Id,
+        Target = target,
+        ResultCode = resultCode,
+        DurationMs = duration,
+        Success = success;
+//
+union
+    (gatewayTrace | extend Detail = strcat(
+        "user=", ObjectId,
+        " model=", ModelDeployment,
+        " status=", StatusCode,
+        " streaming=", Streaming,
+        " failure=", FailureCategory,
+        " usage=", UsageSource,
+        " foundryRequestId=", FoundryRequestId)),
+    (gatewayRequest | extend Detail = strcat("name=", Name, " result=", ResultCode, " success=", Success)),
+    (backendDependency | extend Detail = strcat("target=", Target, " result=", ResultCode, " success=", Success))
+| project timestamp, Source, TraceId, DurationMs, Detail
+| order by timestamp asc

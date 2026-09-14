@@ -1,0 +1,53 @@
+// ===========================================================================
+// Failures, grouped by cause
+//
+// Uses the safe failure taxonomy from specs/telemetry.schema.json rather than
+// parsing error strings. The gateway deliberately never emits raw
+// LastError.Message, backend bodies, or policy source, so there is no free
+// text here to mine - and nothing sensitive to leak either.
+//
+// IMPORTANT: an SSE error can arrive under HTTP 200. A 2xx status therefore
+// does NOT prove the generation succeeded. The outcome/status split below
+// exists precisely so that case stays visible.
+// ===========================================================================
+
+let lookback = 24h;
+traces
+| where timestamp > ago(lookback)
+| where message == "responses.invocation"
+| extend
+    StatusCode      = toint(customDimensions["status_code"]),
+    FailureCategory = tostring(customDimensions["failure_category"]),
+    ObjectId        = tostring(customDimensions["object_id"]),
+    TenantId        = tostring(customDimensions["tenant_id"]),
+    ClientAppId     = tostring(customDimensions["client_app_id"]),
+    ModelDeployment = tostring(customDimensions["model_deployment"]),
+    Streaming       = tostring(customDimensions["streaming"]),
+    CorrelationId   = tostring(customDimensions["correlation_id"])
+| where StatusCode >= 400 or isnotempty(FailureCategory)
+| summarize
+    Occurrences     = count(),
+    DistinctUsers   = dcount(ObjectId),
+    DistinctTenants = dcount(TenantId),
+    DistinctApps    = dcount(ClientAppId),
+    FirstSeen       = min(timestamp),
+    LastSeen        = max(timestamp),
+    // A sample ID so an engineer can pivot to correlation.kql.
+    SampleCorrelationId = any(CorrelationId)
+    by StatusCode, FailureCategory, ModelDeployment
+| extend Interpretation = case(
+    FailureCategory == "missing_token",          "No bearer token presented.",
+    FailureCategory == "invalid_token",          "Token failed validation: signature, expiry, audience, or WRONG TENANT. Single-tenant validation returns 401 for all of these.",
+    FailureCategory == "not_delegated_identity", "App-only token, or missing scp/tid/oid. Only delegated human tokens are accepted.",
+    FailureCategory == "unapproved_client",      "Client application is not on the allowlist.",
+    FailureCategory == "forbidden_rbac",         "Validated human lacks Foundry RBAC - OR daily token quota exhausted, which natively returns 403. See gate G5.",
+    FailureCategory == "invalid_request",        "Schema violation, unknown field, or bad content type.",
+    FailureCategory == "unapproved_model",       "Requested a deployment other than the approved one.",
+    FailureCategory == "store_not_permitted",    "Attempted store:true. Rejected, not silently rewritten.",
+    FailureCategory == "payload_too_large",      "Request body exceeded the configured cap.",
+    FailureCategory == "rate_limited",           "Per-user TPM exceeded.",
+    FailureCategory == "quota_exceeded",         "Per-user daily quota exceeded.",
+    FailureCategory == "backend_unavailable",    "Foundry unreachable or returned 5xx.",
+    FailureCategory == "backend_timeout",        "Foundry did not respond within the configured timeout.",
+    "Unclassified - investigate.")
+| order by Occurrences desc
