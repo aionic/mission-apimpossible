@@ -1,0 +1,60 @@
+<!--
+    Fragment: security-headers
+
+    Controls what crosses the trust boundary, in both directions.
+
+    Runs BEFORE authentication so that no caller-supplied identity header can
+    survive long enough to be confused with a validated claim. Gateway-owned
+    metadata is generated AFTER authentication, from validated claims only.
+
+    Honest limitation: a perfect "only these headers reach the backend"
+    guarantee is not achievable with set-header. Connection, Content-Length,
+    Keep-Alive and Transfer-Encoding cannot be altered or deleted, and the
+    client-IP component of X-Forwarded-For cannot be removed. Those are
+    documented in docs/security.md rather than papered over.
+-->
+<fragment>
+    <!--
+        Identity headers a caller must never be able to assert.
+        APIM derives identity exclusively from the validated JWT.
+    -->
+    <set-header name="x-user-id" exists-action="delete" />
+    <set-header name="x-object-id" exists-action="delete" />
+    <set-header name="x-tenant-id" exists-action="delete" />
+    <set-header name="x-user-object-id" exists-action="delete" />
+    <set-header name="x-ms-client-principal" exists-action="delete" />
+    <set-header name="x-ms-client-principal-id" exists-action="delete" />
+    <set-header name="x-ms-client-principal-name" exists-action="delete" />
+    <set-header name="x-ms-client-principal-idp" exists-action="delete" />
+
+    <!--
+        Gateway-owned observability metadata. A caller supplying these would
+        otherwise be able to forge the troubleshooting trail.
+    -->
+    <set-header name="x-foundry-request-id" exists-action="delete" />
+    <set-header name="x-apim-request-id" exists-action="delete" />
+    <set-header name="x-correlation-source" exists-action="delete" />
+
+    <!--
+        Credential headers for authentication schemes this architecture does
+        not use. Deleting them means a caller cannot smuggle a key past the
+        Entra-only posture, and cannot trigger key-based auth on a backend
+        where local auth is disabled anyway.
+    -->
+    <set-header name="api-key" exists-action="delete" />
+    <set-header name="Ocp-Apim-Subscription-Key" exists-action="delete" />
+    <set-header name="Ocp-Apim-Trace" exists-action="delete" />
+
+    <!--
+        Preview opt-in headers. The v1 API gates preview features behind
+        feature-specific headers, so stripping them keeps this gateway on GA
+        behavior even if a client tries to opt in.
+    -->
+    <set-header name="aoai-evals" exists-action="delete" />
+    <set-header name="x-ms-oai-preview" exists-action="delete" />
+
+    <!-- Legacy routing/override headers. -->
+    <set-header name="x-forwarded-host" exists-action="delete" />
+    <set-header name="x-original-url" exists-action="delete" />
+    <set-header name="x-rewrite-url" exists-action="delete" />
+</fragment>

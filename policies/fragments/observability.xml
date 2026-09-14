@@ -1,0 +1,52 @@
+<!--
+    Fragment: observability
+
+    Emits the metadata-only record defined in specs/telemetry.schema.json.
+
+    Emitted: correlation IDs, trace IDs, request IDs, validated tenant and
+    object IDs, deployment name, status, and timing.
+
+    NEVER emitted, anywhere, at any verbosity: Authorization headers, JWTs or
+    any claim beyond tid/oid/azp, prompt text, source code, model output, tool
+    arguments, file contents, UPNs, email addresses, display names, raw
+    LastError text, backend bodies, backend URLs, resource IDs, or policy
+    source.
+
+    tid and oid are PROTECTED PSEUDONYMOUS IDENTIFIERS. They belong in
+    access-controlled logs and are prohibited as metric dimensions because of
+    the documented cardinality limits.
+
+    The trace message is a fixed string with structured metadata, never
+    interpolated free text, so nothing user-controlled can be smuggled into a
+    message body.
+-->
+<fragment>
+    <trace source="mission-apimpossible" severity="information">
+        <message>responses.invocation</message>
+        <metadata name="schema_version" value="1.0" />
+        <metadata name="environment" value="{{map-environment-name}}" />
+        <metadata name="correlation_id" value="@((string)context.Variables.GetValueOrDefault&lt;string&gt;(&quot;correlation-id&quot;, &quot;&quot;))" />
+        <metadata name="gateway_request_id" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;gateway-request-id&quot;, &quot;&quot;))" />
+        <metadata name="foundry_request_id" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;foundry-request-id&quot;, &quot;&quot;))" />
+        <metadata name="tenant_id" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-tid&quot;, &quot;&quot;))" />
+        <metadata name="object_id" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-oid&quot;, &quot;&quot;))" />
+        <metadata name="client_app_id" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-azp&quot;, &quot;&quot;))" />
+        <metadata name="model_deployment" value="{{map-approved-deployment}}" />
+        <metadata name="operation" value="responses.create" />
+        <metadata name="status_code" value="@(context.Response == null ? &quot;0&quot; : context.Response.StatusCode.ToString())" />
+        <metadata name="streaming" value="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;is-streaming&quot;, false).ToString())" />
+        <metadata name="failure_category" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;failure-category&quot;, &quot;&quot;))" />
+        <!--
+            Elapsed as the gateway measures it. For a streaming request this
+            runs to stream completion or termination, so it is NOT model think
+            time. Queries must not present it as such.
+        -->
+        <metadata name="apim_duration_ms" value="@(context.Elapsed.TotalMilliseconds.ToString(&quot;F0&quot;))" />
+        <!--
+            Usage AVAILABILITY, not usage values. A final SSE usage event may
+            never arrive, so downstream queries must distinguish "absent" from
+            "zero" - see specs/telemetry.schema.json.
+        -->
+        <metadata name="usage_source" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;usage-source&quot;, &quot;unavailable&quot;))" />
+    </trace>
+</fragment>

@@ -1,0 +1,166 @@
+<!--
+    Fragment: request-validation
+
+    Enforces the allowlist in specs/responses-request.schema.json, plus the
+    two rules carrying the most security weight: the model allowlist and
+    stateless operation.
+
+    Body handling: this fragment reads the request body, which is unavoidable
+    for schema validation and for injecting store=false. It uses
+    preserveContent so the body survives for forwarding. "Unbuffered SSE" in
+    this repository refers to the RESPONSE stream (see docs/observability.md);
+    it is not a claim that the request body is never materialized.
+
+    XML note: inner double quotes appear as &quot; and generics as &lt;T&gt;.
+-->
+<fragment>
+    <!-- Reject anything that is not JSON before attempting to parse it. -->
+    <choose>
+        <when condition="@(!context.Request.Headers.GetValueOrDefault(&quot;Content-Type&quot;, &quot;&quot;).Contains(&quot;application/json&quot;))">
+            <set-variable name="failure-category" value="invalid_request" />
+            <return-response>
+                <set-status code="415" reason="Unsupported Media Type" />
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                </set-header>
+                <set-header name="x-correlation-id" exists-action="override">
+                    <value>@((string)context.Variables["correlation-id"])</value>
+                </set-header>
+                <set-body>@{
+                    var payload = new JObject(
+                        new JProperty("error", new JObject(
+                            new JProperty("code", "invalid_request"),
+                            new JProperty("message", "Content-Type must be application/json."),
+                            new JProperty("correlation_id", (string)context.Variables["correlation-id"])
+                        ))
+                    );
+                    return payload.ToString(Newtonsoft.Json.Formatting.None);
+                }</set-body>
+            </return-response>
+        </when>
+    </choose>
+
+    <!--
+        Structural and size validation against the committed schema, which
+        sets additionalProperties:false at every level. Unknown fields -
+        including Responses features that did not exist at review time - fail
+        closed instead of passing through.
+
+        max-size sits well below the lowest documented APIM ceiling because
+        the documented ceilings conflict (gate G7).
+    -->
+    <validate-content unspecified-content-type-action="prevent"
+                      max-size="{{map-max-request-bytes}}"
+                      size-exceeded-action="prevent"
+                      errors-variable-name="content-validation-errors">
+        <content type="application/json" validate-as="json" action="prevent" schema-id="responses-request" />
+    </validate-content>
+
+    <!-- Parse once; keep the body intact for forwarding. -->
+    <set-variable name="request-json" value="@(context.Request.Body.As&lt;JObject&gt;(preserveContent: true))" />
+
+    <!--
+        Model allowlist.
+
+        The schema constrains the SHAPE of `model`; this constrains the VALUE.
+        A caller cannot reach any deployment other than the approved one, even
+        if another deployment exists on the account.
+    -->
+    <set-variable name="requested-model" value="@{
+        var body = (JObject)context.Variables[&quot;request-json&quot;];
+        var model = body[&quot;model&quot;];
+        return model == null ? &quot;&quot; : model.ToString();
+    }" />
+
+    <choose>
+        <when condition="@((string)context.Variables[&quot;requested-model&quot;] != &quot;{{map-approved-deployment}}&quot;)">
+            <set-variable name="failure-category" value="unapproved_model" />
+            <return-response>
+                <set-status code="400" reason="Bad Request" />
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                </set-header>
+                <set-header name="x-correlation-id" exists-action="override">
+                    <value>@((string)context.Variables["correlation-id"])</value>
+                </set-header>
+                <set-body>@{
+                    var payload = new JObject(
+                        new JProperty("error", new JObject(
+                            new JProperty("code", "unapproved_model"),
+                            new JProperty("message", "The requested model is not approved for this gateway."),
+                            new JProperty("correlation_id", (string)context.Variables["correlation-id"])
+                        ))
+                    );
+                    return payload.ToString(Newtonsoft.Json.Formatting.None);
+                }</set-body>
+            </return-response>
+        </when>
+    </choose>
+
+    <!--
+        Stateless enforcement.
+
+        Explicit store:true is REJECTED rather than rewritten. Silently
+        flipping a developer's stated intent would hide a security-relevant
+        decision from them - they would believe their source was persisted
+        when it was not, or stop considering the question at all.
+
+        The schema already pins store to the literal boolean false; this
+        catches it defensively and returns a specific, actionable error code
+        rather than a generic schema violation.
+    -->
+    <set-variable name="store-violation" value="@{
+        var body = (JObject)context.Variables[&quot;request-json&quot;];
+        var store = body[&quot;store&quot;];
+        if (store == null || store.Type == JTokenType.Null) { return false; }
+        if (store.Type != JTokenType.Boolean) { return true; }
+        return store.Value&lt;bool&gt;();
+    }" />
+
+    <choose>
+        <when condition="@((bool)context.Variables[&quot;store-violation&quot;])">
+            <set-variable name="failure-category" value="store_not_permitted" />
+            <return-response>
+                <set-status code="400" reason="Bad Request" />
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                </set-header>
+                <set-header name="x-correlation-id" exists-action="override">
+                    <value>@((string)context.Variables["correlation-id"])</value>
+                </set-header>
+                <set-body>@{
+                    var payload = new JObject(
+                        new JProperty("error", new JObject(
+                            new JProperty("code", "store_not_permitted"),
+                            new JProperty("message", "This gateway enforces stateless operation. Omit 'store' or set it to false."),
+                            new JProperty("correlation_id", (string)context.Variables["correlation-id"])
+                        ))
+                    );
+                    return payload.ToString(Newtonsoft.Json.Formatting.None);
+                }</set-body>
+            </return-response>
+        </when>
+    </choose>
+
+    <!--
+        Record whether this is a streaming request. The observability fragment
+        needs it, and the response body cannot be inspected later without
+        breaking SSE.
+    -->
+    <set-variable name="is-streaming" value="@{
+        var body = (JObject)context.Variables[&quot;request-json&quot;];
+        var stream = body[&quot;stream&quot;];
+        if (stream == null || stream.Type != JTokenType.Boolean) { return false; }
+        return stream.Value&lt;bool&gt;();
+    }" />
+
+    <!--
+        Inject store:false when the caller omitted it, so statelessness never
+        depends on client behavior.
+    -->
+    <set-body>@{
+        var body = (JObject)context.Variables["request-json"];
+        body["store"] = false;
+        return body.ToString(Newtonsoft.Json.Formatting.None);
+    }</set-body>
+</fragment>

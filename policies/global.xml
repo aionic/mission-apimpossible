@@ -1,0 +1,58 @@
+<!--
+    Global policy (All APIs scope)
+
+    Deliberately minimal. Governance belongs on the one operation that exists,
+    not spread across a scope that might later acquire other APIs.
+
+    Its job is to fail safe: anything reaching this gateway that is not the
+    approved Responses operation gets a clean rejection, not a default route.
+-->
+<policies>
+    <inbound>
+        <base />
+
+        <!-- HTTPS only. There is no scenario where a bearer token should
+             traverse this gateway in cleartext. -->
+        <choose>
+            <when condition="@(context.Request.OriginalUrl.Scheme != &quot;https&quot;)">
+                <return-response>
+                    <set-status code="400" reason="Bad Request" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>{"error":{"code":"https_required","message":"HTTPS is required."}}</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- Do not advertise the gateway implementation to callers. -->
+        <set-header name="X-Powered-By" exists-action="delete" />
+        <set-header name="X-AspNet-Version" exists-action="delete" />
+    </inbound>
+
+    <backend>
+        <base />
+    </backend>
+
+    <outbound>
+        <base />
+
+        <!-- HSTS. The gateway is HTTPS-only; say so. -->
+        <set-header name="Strict-Transport-Security" exists-action="override">
+            <value>max-age=31536000; includeSubDomains</value>
+        </set-header>
+        <set-header name="X-Content-Type-Options" exists-action="override">
+            <value>nosniff</value>
+        </set-header>
+
+        <!-- Server cannot be deleted via set-header (documented platform
+             limitation); it is overwritten with a non-descriptive value
+             instead. -->
+        <set-header name="X-Powered-By" exists-action="delete" />
+        <set-header name="X-AspNet-Version" exists-action="delete" />
+    </outbound>
+
+    <on-error>
+        <base />
+    </on-error>
+</policies>

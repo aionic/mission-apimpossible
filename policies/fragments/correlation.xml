@@ -1,0 +1,79 @@
+<!--
+    Fragment: correlation
+
+    Establishes exactly one canonical correlation identifier per request.
+
+    This value is TELEMETRY ONLY. It is never used for authentication,
+    authorization, quota keying, or routing. A caller who supplies a valid
+    GUID keeps it for troubleshooting continuity; a caller who supplies
+    garbage gets a gateway-generated one. Neither outcome grants anything.
+
+    This fragment runs FIRST so that every later rejection - including
+    authentication failures - can still return a correlation ID.
+
+    XML note: policy expressions live inside XML attributes, so inner double
+    quotes are written as &quot; and comparison operators as &gt; / &lt;.
+    That is XML escaping only; it does not change behavior.
+-->
+<fragment>
+    <!--
+        Accept a caller-supplied value only when it is a well-formed GUID.
+        The check is length-bounded and anchored, so an oversized or
+        injection-shaped header is replaced rather than echoed.
+    -->
+    <set-variable name="incoming-correlation" value="@{
+        var raw = context.Request.Headers.GetValueOrDefault(&quot;x-correlation-id&quot;, &quot;&quot;);
+        if (string.IsNullOrEmpty(raw) || raw.Length != 36) { return &quot;&quot;; }
+        var ok = System.Text.RegularExpressions.Regex.IsMatch(
+            raw, &quot;^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$&quot;);
+        return ok ? raw : &quot;&quot;;
+    }" />
+
+    <set-variable name="correlation-id" value="@{
+        var incoming = (string)context.Variables[&quot;incoming-correlation&quot;];
+        return string.IsNullOrEmpty(incoming) ? Guid.NewGuid().ToString() : incoming;
+    }" />
+
+    <!--
+        context.RequestId is the gateway's own identifier and is distinct from
+        both the correlation ID and the W3C trace ID. Captured separately so
+        the observability record can carry all three without conflating them.
+    -->
+    <set-variable name="gateway-request-id" value="@(context.RequestId.ToString())" />
+
+    <!-- Normalize so the backend and the client agree on one value. -->
+    <set-header name="x-correlation-id" exists-action="override">
+        <value>@((string)context.Variables["correlation-id"])</value>
+    </set-header>
+
+    <!--
+        Sent opportunistically. Gate G6 found no first-party guarantee that
+        Foundry echoes, persists, or exposes this for Responses, so the
+        documentation must not claim it is queryable downstream.
+    -->
+    <set-header name="x-ms-client-request-id" exists-action="override">
+        <value>@((string)context.Variables["correlation-id"])</value>
+    </set-header>
+
+    <!--
+        W3C trace context.
+
+        A malformed traceparent is dropped rather than forwarded, so a caller
+        cannot poison the trace graph. APIM's own W3C diagnostics then
+        establish the parent-child relationship between the frontend request
+        and the backend dependency.
+    -->
+    <set-variable name="valid-traceparent" value="@{
+        var tp = context.Request.Headers.GetValueOrDefault(&quot;traceparent&quot;, &quot;&quot;);
+        if (string.IsNullOrEmpty(tp) || tp.Length &gt; 64) { return false; }
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            tp, &quot;^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$&quot;);
+    }" />
+
+    <choose>
+        <when condition="@(!(bool)context.Variables[&quot;valid-traceparent&quot;])">
+            <set-header name="traceparent" exists-action="delete" />
+            <set-header name="tracestate" exists-action="delete" />
+        </when>
+    </choose>
+</fragment>

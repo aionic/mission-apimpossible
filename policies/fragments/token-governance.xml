@@ -1,0 +1,67 @@
+<!--
+    Fragment: token-governance
+
+    Per-user rate and quota limits, keyed on the validated tid:oid.
+
+    Honest framing, carried through into docs/security.md: these are
+    operational safeguards, NOT billing controls. The documented behavior has
+    real limits:
+      * counters are per gateway, so concurrent requests can overshoot;
+      * remaining-quota headers are explicitly an estimate;
+      * for streaming, prompt tokens are ALWAYS estimated regardless of the
+        estimate-prompt-tokens setting;
+      * 'Daily' is a fixed UTC calendar day, not a rolling 24-hour window.
+
+    Azure Cost Management remains the financial source of truth.
+
+    The counter key is deliberately NOT the APIM subscription ID. The Entra
+    principal is the consumer, and this gateway issues no subscription keys.
+-->
+<fragment>
+    <!--
+        Coarse concurrency guard. Honest limitation: this counts requests as
+        the gateway sees them. The interaction between counter lifetime and a
+        long-lived SSE stream must be measured (gate G5) before anyone
+        describes it as full-stream enforcement.
+    -->
+    <rate-limit-by-key
+        calls="{{map-max-concurrent-per-user}}"
+        renewal-period="1"
+        counter-key="@((string)context.Variables[&quot;quota-key&quot;])"
+        remaining-calls-variable-name="remaining-burst" />
+
+    <!--
+        Token-aware limiting. Applies to the Responses API and understands
+        streaming. Placed in inbound per the current policy reference - that
+        is inbound for BOTH llm policies, including the metric emitter.
+
+        estimate-prompt-tokens is false so non-streaming requests are limited
+        against real reported usage. Streaming prompts are estimated anyway;
+        the policy cannot avoid that.
+    -->
+    <llm-token-limit
+        counter-key="@((string)context.Variables[&quot;quota-key&quot;])"
+        tokens-per-minute="{{map-tokens-per-minute}}"
+        token-quota="{{map-daily-token-quota}}"
+        token-quota-period="Daily"
+        estimate-prompt-tokens="false"
+        retry-after-header-name="Retry-After"
+        remaining-tokens-header-name="x-ratelimit-remaining-tokens"
+        tokens-consumed-header-name="x-ratelimit-consumed-tokens" />
+
+    <!--
+        Token metrics for aggregate reporting.
+
+        Dimensions are deliberately LOW CARDINALITY. oid, correlation IDs and
+        request IDs are prohibited here: custom metrics allow 100 values per
+        dimension and 1,000 active series per namespace, and exceeding those
+        limits SILENTLY DISCARDS data. Per-user detail belongs in the
+        access-controlled logs instead.
+    -->
+    <llm-emit-token-metric namespace="mission-apimpossible">
+        <dimension name="Environment" value="{{map-environment-name}}" />
+        <dimension name="ModelDeployment" value="{{map-approved-deployment}}" />
+        <dimension name="Streaming" value="@(((bool)context.Variables[&quot;is-streaming&quot;]).ToString())" />
+        <dimension name="API" value="@(context.Api.Name)" />
+    </llm-emit-token-metric>
+</fragment>

@@ -1,0 +1,157 @@
+<!--
+    Fragment: authentication
+
+    Validates that the caller is a delegated HUMAN from the one permitted
+    tenant, and derives identity from the validated token only.
+
+    The single most important thing this fragment does NOT do: replace the
+    caller's token. There is no authentication-managed-identity policy, no
+    backend credential, and no api-key injection anywhere in this repository.
+    The Authorization header the client sent is the Authorization header
+    Foundry receives.
+
+    Ordering: identity headers are scrubbed in the security-headers fragment
+    BEFORE this runs, so nothing downstream can confuse a caller-supplied
+    header with a validated claim.
+
+    XML note: inner double quotes appear as &quot; and generics as &lt;T&gt;
+    because policy expressions live inside XML attributes.
+-->
+<fragment>
+    <!--
+        Single-tenant validation against a literal tenant GUID. 'common' and
+        'organizations' are rejected at the Terraform variable level, so this
+        cannot be widened by configuration drift.
+
+        failed-validation-httpcode is 401 for ALL validation failures,
+        including wrong tenant. Emitting 403 only for tenant mismatch would
+        require inspecting an UNVALIDATED 'tid' claim to choose a status code,
+        i.e. reading attacker-controlled data before authentication. See
+        docs/api-contract.md.
+    -->
+    <validate-azure-ad-token
+        tenant-id="{{map-tenant-id}}"
+        header-name="Authorization"
+        failed-validation-httpcode="401"
+        failed-validation-error-message="Unauthorized. A valid Microsoft Entra access token for this tenant is required."
+        output-token-variable-name="validated-jwt">
+        <audiences>
+            <audience>{{map-api-audience}}</audience>
+        </audiences>
+    </validate-azure-ad-token>
+
+    <!--
+        From here on ONLY the validated token object is consulted. The raw
+        Authorization header is never parsed for authorization decisions.
+    -->
+    <set-variable name="claim-tid" value="@(((Jwt)context.Variables[&quot;validated-jwt&quot;]).Claims.GetValueOrDefault(&quot;tid&quot;, &quot;&quot;))" />
+    <set-variable name="claim-oid" value="@(((Jwt)context.Variables[&quot;validated-jwt&quot;]).Claims.GetValueOrDefault(&quot;oid&quot;, &quot;&quot;))" />
+    <set-variable name="claim-scp" value="@(((Jwt)context.Variables[&quot;validated-jwt&quot;]).Claims.GetValueOrDefault(&quot;scp&quot;, &quot;&quot;))" />
+    <set-variable name="claim-idtyp" value="@(((Jwt)context.Variables[&quot;validated-jwt&quot;]).Claims.GetValueOrDefault(&quot;idtyp&quot;, &quot;&quot;))" />
+
+    <!-- v2.0 tokens carry azp; v1.0 tokens carry appid. Accept either. -->
+    <set-variable name="claim-azp" value="@{
+        var jwt = (Jwt)context.Variables[&quot;validated-jwt&quot;];
+        var azp = jwt.Claims.GetValueOrDefault(&quot;azp&quot;, &quot;&quot;);
+        return string.IsNullOrEmpty(azp) ? jwt.Claims.GetValueOrDefault(&quot;appid&quot;, &quot;&quot;) : azp;
+    }" />
+
+    <!--
+        Prove the caller is a delegated human.
+
+        tid and oid alone do NOT establish this - service principals have
+        both. The discriminators are:
+          * scp is issued only on delegated user tokens;
+          * idtyp = "app" marks an app-only token when present.
+
+        Deliberately absent: any rejection based on the presence of a 'roles'
+        claim. Humans can hold app roles, so rejecting on 'roles' would lock
+        out legitimate users. App-only tokens are rejected specifically.
+
+        This establishes a delegated user identity. It does not prove a person
+        is at the keyboard, and this repository does not claim it does.
+    -->
+    <set-variable name="is-delegated-human" value="@{
+        var idtyp = (string)context.Variables[&quot;claim-idtyp&quot;];
+        var scp = (string)context.Variables[&quot;claim-scp&quot;];
+        var tid = (string)context.Variables[&quot;claim-tid&quot;];
+        var oid = (string)context.Variables[&quot;claim-oid&quot;];
+        if (idtyp == &quot;app&quot;) { return false; }
+        if (string.IsNullOrEmpty(scp)) { return false; }
+        if (string.IsNullOrEmpty(tid) || string.IsNullOrEmpty(oid)) { return false; }
+        return true;
+    }" />
+
+    <choose>
+        <when condition="@(!(bool)context.Variables[&quot;is-delegated-human&quot;])">
+            <set-variable name="failure-category" value="not_delegated_identity" />
+            <return-response>
+                <set-status code="403" reason="Forbidden" />
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                </set-header>
+                <set-header name="x-correlation-id" exists-action="override">
+                    <value>@((string)context.Variables["correlation-id"])</value>
+                </set-header>
+                <set-body>@{
+                    var payload = new JObject(
+                        new JProperty("error", new JObject(
+                            new JProperty("code", "not_delegated_identity"),
+                            new JProperty("message", "This gateway accepts delegated user tokens only. Application-only tokens are not permitted."),
+                            new JProperty("correlation_id", (string)context.Variables["correlation-id"])
+                        ))
+                    );
+                    return payload.ToString(Newtonsoft.Json.Formatting.None);
+                }</set-body>
+            </return-response>
+        </when>
+    </choose>
+
+    <!--
+        Client application allowlist.
+
+        An empty allowlist disables this check. That is a deliberate escape
+        hatch for first deployment, before the real client IDs have been
+        observed (gate G2), and it is documented as a weaker posture rather
+        than silently accepted.
+    -->
+    <set-variable name="client-app-allowed" value="@{
+        var allowed = &quot;{{map-allowed-client-app-ids}}&quot;;
+        if (string.IsNullOrWhiteSpace(allowed)) { return true; }
+        var azp = (string)context.Variables[&quot;claim-azp&quot;];
+        return allowed.Split(',').Select(a =&gt; a.Trim()).Contains(azp);
+    }" />
+
+    <choose>
+        <when condition="@(!(bool)context.Variables[&quot;client-app-allowed&quot;])">
+            <set-variable name="failure-category" value="unapproved_client" />
+            <return-response>
+                <set-status code="403" reason="Forbidden" />
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                </set-header>
+                <set-header name="x-correlation-id" exists-action="override">
+                    <value>@((string)context.Variables["correlation-id"])</value>
+                </set-header>
+                <set-body>@{
+                    var payload = new JObject(
+                        new JProperty("error", new JObject(
+                            new JProperty("code", "unapproved_client"),
+                            new JProperty("message", "The calling application is not approved for this gateway."),
+                            new JProperty("correlation_id", (string)context.Variables["correlation-id"])
+                        ))
+                    );
+                    return payload.ToString(Newtonsoft.Json.Formatting.None);
+                }</set-body>
+            </return-response>
+        </when>
+    </choose>
+
+    <!--
+        Canonical quota key, built from validated claims only. A caller cannot
+        move themselves onto another user's counter by sending a header, and
+        refreshing a token does not change tid:oid, so one user keeps one
+        counter across sessions.
+    -->
+    <set-variable name="quota-key" value="@((string)context.Variables[&quot;claim-tid&quot;] + &quot;:&quot; + (string)context.Variables[&quot;claim-oid&quot;])" />
+</fragment>

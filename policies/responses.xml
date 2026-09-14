@@ -1,0 +1,147 @@
+<!--
+    Operation policy: POST /openai/v1/responses
+
+    The only operation this gateway exposes.
+
+    Inbound order is security-significant and matches the approved sequence in
+    docs/implementation-plan.md:
+
+      1. correlation        - first, so every later rejection can still return
+                              a correlation ID
+      2. security-headers   - scrub spoofable input BEFORE anything reads it
+      3. authentication     - validate the human; publish validated claims
+      4. request-validation - content type, size, schema, model, store=false
+      5. token-governance   - per-user limits keyed on validated tid:oid
+      6. backend + forward  - original Authorization, unmodified
+
+    The defining property of this file: nowhere does it set, replace, or
+    augment the Authorization header. There is no authentication-managed-
+    identity policy, no backend credential, and no api-key injection. The
+    token the developer acquired is the token Foundry authorizes.
+-->
+<policies>
+    <inbound>
+        <base />
+
+        <include-fragment fragment-id="map-correlation" />
+        <include-fragment fragment-id="map-security-headers" />
+        <include-fragment fragment-id="map-authentication" />
+        <include-fragment fragment-id="map-request-validation" />
+        <include-fragment fragment-id="map-token-governance" />
+
+        <!--
+            Named backend with no credentials attached. Selected explicitly so
+            routing is deterministic and so no inherited backend entity can
+            introduce backend authorization behind our back.
+        -->
+        <set-backend-service backend-id="map-foundry-responses" />
+    </inbound>
+
+    <backend>
+        <!--
+            buffer-response="false" is REQUIRED for server-sent events. The
+            default is true, which buffers chunks and would destroy streaming.
+
+            No retry policy. POST /responses is not idempotent: retrying after
+            the backend accepted a request can produce duplicate inference,
+            duplicate token consumption, and duplicate cost. Clients retry
+            intentionally, respecting Retry-After.
+        -->
+        <forward-request
+            timeout="{{map-backend-timeout-seconds}}"
+            buffer-response="false"
+            fail-on-error-status-code="false" />
+    </backend>
+
+    <outbound>
+        <base />
+
+        <!--
+            Capture Foundry's troubleshooting identifier BEFORE any header
+            manipulation could collide with it. This is a support handle for
+            raising a case with Microsoft, not a joinable trace segment
+            (gate G6).
+        -->
+        <set-variable name="foundry-request-id" value="@(context.Response.Headers.GetValueOrDefault(&quot;apim-request-id&quot;, &quot;&quot;))" />
+
+        <!--
+            Usage availability discriminator. The response body is NEVER read
+            here: doing so would break SSE and would risk model output
+            entering telemetry. For streaming, usage is delivered in-band to
+            the client and the gateway cannot see it without buffering, so it
+            is recorded as unavailable rather than guessed at.
+        -->
+        <set-variable name="usage-source" value="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;is-streaming&quot;, false) ? &quot;unavailable&quot; : &quot;reported&quot;)" />
+
+        <!-- Safe correlation metadata returned to the caller. -->
+        <set-header name="x-correlation-id" exists-action="override">
+            <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("correlation-id", ""))</value>
+        </set-header>
+        <set-header name="x-foundry-request-id" exists-action="override">
+            <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("foundry-request-id", ""))</value>
+        </set-header>
+
+        <!-- Do not leak backend infrastructure details to the client. -->
+        <set-header name="apim-request-id" exists-action="delete" />
+        <set-header name="x-ms-region" exists-action="delete" />
+        <set-header name="azureml-model-session" exists-action="delete" />
+        <set-header name="x-powered-by" exists-action="delete" />
+
+        <include-fragment fragment-id="map-observability" />
+    </outbound>
+
+    <on-error>
+        <base />
+
+        <!--
+            Classify the failure into the safe taxonomy from
+            specs/telemetry.schema.json. context.LastError.Message is
+            deliberately NOT emitted: it can carry policy source, backend
+            detail, or fragments of the offending request.
+        -->
+        <set-variable name="failure-category" value="@{
+            var status = context.Response == null ? 500 : context.Response.StatusCode;
+            if (status == 400) { return &quot;invalid_request&quot;; }
+            if (status == 401) { return &quot;invalid_token&quot;; }
+            if (status == 403) { return &quot;forbidden_rbac&quot;; }
+            if (status == 413) { return &quot;payload_too_large&quot;; }
+            if (status == 429) { return &quot;rate_limited&quot;; }
+            if (status == 503) { return &quot;backend_unavailable&quot;; }
+            if (status == 504) { return &quot;backend_timeout&quot;; }
+            return &quot;backend_error&quot;;
+        }" />
+
+        <!-- Correlation survives the error path so a user can still report it. -->
+        <set-header name="x-correlation-id" exists-action="override">
+            <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("correlation-id", ""))</value>
+        </set-header>
+
+        <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+        </set-header>
+
+        <!-- Strip anything the backend may have attached to the error. -->
+        <set-header name="apim-request-id" exists-action="delete" />
+        <set-header name="x-ms-region" exists-action="delete" />
+
+        <!--
+            Normalized error body. Generic by design: no backend URL, no
+            subscription or resource ID, no JWT claim the client does not
+            already own, no APIM internals, no stack trace.
+        -->
+        <set-body>@{
+            var code = context.Variables.GetValueOrDefault&lt;string&gt;("failure-category", "backend_error");
+            var correlation = context.Variables.GetValueOrDefault&lt;string&gt;("correlation-id", "");
+            var payload = new JObject(
+                new JProperty("error", new JObject(
+                    new JProperty("code", code),
+                    new JProperty("message", "The request could not be completed. Quote the correlation ID when reporting this."),
+                    new JProperty("correlation_id", correlation)
+                ))
+            );
+            return payload.ToString(Newtonsoft.Json.Formatting.None);
+        }</set-body>
+
+        <include-fragment fragment-id="map-observability" />
+    </on-error>
+</policies>
