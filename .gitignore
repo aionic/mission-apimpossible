@@ -1,0 +1,94 @@
+# ---------------------------------------------------------------------------
+# Mission APIMpossible
+#
+# This repository must never contain credentials, tokens, Terraform state,
+# captured prompts/responses, or telemetry evidence containing identifiers.
+# See docs/security.md for the full data-handling contract.
+# ---------------------------------------------------------------------------
+
+# --- Terraform -------------------------------------------------------------
+# State and plans can contain provider-computed values. Never commit them.
+**/.terraform/
+**/.terraform.lock.hcl.bak
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+crash.*.log
+*.tfplan
+*.tfplan.*
+plan.out
+plan.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Environment-specific variable files may contain tenant/subscription/object IDs.
+# Committed examples live in infra/profiles/*.tfvars.example.
+*.auto.tfvars
+*.auto.tfvars.json
+terraform.tfvars
+terraform.tfvars.json
+!infra/profiles/*.tfvars.example
+
+# --- Azure Developer CLI ---------------------------------------------------
+.azure/
+
+# --- Node / VS Code extension ---------------------------------------------
+node_modules/
+out/
+dist/
+*.vsix
+.vscode-test/
+*.tsbuildinfo
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Secrets and local configuration --------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.publishsettings
+secrets.json
+local.settings.json
+
+# --- Test / evidence artifacts --------------------------------------------
+# Integration evidence can contain object IDs, correlation IDs and request IDs.
+evidence/
+artifacts/
+*.har
+*.trace
+test-results/
+
+# --- OS / editor -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+
+# --- Beads -----------------------------------------------------------------
+# The Dolt database is local working state; issues.jsonl is the shared export.
+.beads/*.db
+.beads/*.db-shm
+.beads/*.db-wal
+.beads/.dolt/
+.beads/*.lock
