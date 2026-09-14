@@ -247,7 +247,7 @@ all-access APIM subscription is suspended.
 | APIM subscription | **No resource declared**; built-in one suspended via AzAPI without `ListSecrets` |
 | Foundry account | AzureRM skips `AccountsListKeys` when local auth is disabled at creation |
 | App Insights | Connection string is a **sensitive module output**, never a root output |
-| Jumpbox password | AzAPI **write-only** `sensitive_body` — *unproven, gate G4* |
+| Jumpbox password | **Ephemeral** `random_password` + AzAPI **write-only** `sensitive_body` — never in state on either side |
 
 > **Limit.** An App Insights instrumentation key is documented by Microsoft as
 > an *identifier, not a security token*. Local auth is disabled, so the

@@ -9,10 +9,10 @@ recorded in [`platform-validation.md`](platform-validation.md).
 
 | Tool | Pinned | Enforced by | Notes |
 | --- | --- | --- | --- |
-| Terraform | `~> 1.16` | `infra/providers.tf` | `1.11+` is a hard floor: AzAPI write-only `sensitive_body` requires it. |
+| Terraform | `~> 1.16` | `infra/providers.tf` | `1.11+` is a hard floor: AzAPI write-only `sensitive_body` requires it, and ephemeral resources require `1.10+`. |
 | AzureRM provider | `~> 5.5` (locked **5.5.0**) | `infra/providers.tf` + `.terraform.lock.hcl` | State-read behavior audited at 5.5.0. |
 | AzAPI provider | `~> 2.7` (locked **2.12.0**) | `infra/providers.tf` + `.terraform.lock.hcl` | Used only for the narrow exceptions listed below. |
-| random provider | `~> 3.6` (locked **3.9.1**) | `infra/providers.tf` + `.terraform.lock.hcl` | Jumpbox bootstrap value only. |
+| random provider | `~> 3.6` (locked **3.9.1**) | `infra/providers.tf` + `.terraform.lock.hcl` | `3.7+` needed for `ephemeral "random_password"`, which keeps the jumpbox bootstrap value out of state. |
 | Azure Developer CLI | `>= 1.33.0` | `scripts/preflight.ps1` | Terraform integration is beta; accepted as tooling risk. |
 | Azure CLI | `>= 2.86.0` | `scripts/preflight.ps1` | Provides the human credential for the Python client. |
 | Node.js | `>= 20.0.0` | `src/vscode/package.json` | Extension build and test host. |

@@ -114,26 +114,34 @@ resource "azurerm_network_interface" "jumpbox" {
 }
 
 # ---------------------------------------------------------------------------
-# Bootstrap password
+# Bootstrap password  --  EPHEMERAL, never written to state
 #
-# Generated in memory and passed through AzAPI's WRITE-ONLY sensitive_body so
-# it never lands in Terraform state.
+# A normal `random_password` resource PERSISTS its generated value in
+# Terraform state. That would put a reusable credential in state and break the
+# G9 contract, which is the whole reason this module uses AzAPI in the first
+# place.
 #
-# `random_password` itself would normally persist its result in state, which
-# is why it is declared as an ephemeral-style resource whose value is consumed
-# once and whose changes are ignored. The account it bootstraps is disabled by
-# the guest configuration once Entra login is healthy; the documented recovery
-# path is Azure's VM password reset, not a stored credential.
+# `ephemeral` resources (Terraform 1.10+, random provider 3.7+) are never
+# persisted. The value exists only for the duration of the operation and is
+# consumed by AzAPI's write-only `sensitive_body`.
+#
+# Because an ephemeral value is regenerated on every operation, it must not be
+# allowed to cause perpetual drift. `sensitive_body_version` below is pinned,
+# so the password is sent only when that version string changes - not on every
+# plan.
+#
+# The account it bootstraps is disabled by guest configuration once Entra
+# sign-in is healthy. The documented recovery path is Azure's VM password
+# reset, not a stored credential.
 # ---------------------------------------------------------------------------
-resource "random_password" "bootstrap" {
+ephemeral "random_password" "bootstrap" {
   length           = 32
   special          = true
   override_special = "!#$%&*()-_=+[]{}<>:?"
-
-  lifecycle {
-    # Rotating this on every plan would force VM replacement.
-    ignore_changes = all
-  }
+  min_lower        = 2
+  min_upper        = 2
+  min_numeric      = 2
+  min_special      = 2
 }
 
 # ---------------------------------------------------------------------------
@@ -208,15 +216,18 @@ resource "azapi_resource" "jumpbox" {
     }
   }
 
-  # Write-only: sent to Azure, never persisted in state.
+  # Write-only: sent to Azure, never persisted in state. The value comes from
+  # an ephemeral resource, so it is not in state on either side of the wire.
   sensitive_body = {
     properties = {
       osProfile = {
-        adminPassword = random_password.bootstrap.result
+        adminPassword = ephemeral.random_password.bootstrap.result
       }
     }
   }
 
+  # Pinned. The ephemeral password regenerates on every operation, so without
+  # a stable version the provider would resend it and churn the resource.
   sensitive_body_version = {
     "properties.osProfile.adminPassword" = "1"
   }

@@ -131,6 +131,21 @@ argument (requires Terraform 1.11+) and allows explicit control of exported
 response values.
 ([azapi resource](https://github.com/Azure/terraform-provider-azapi/blob/main/docs/resources/resource.md))
 
+**Caught during scaffolding.** A plain `random_password` *resource* persists
+its generated value in Terraform state, which would have defeated the
+write-only `sensitive_body` entirely — the credential would simply have leaked
+in on the other side. This was confirmed by running `terraform plan`, which
+listed `random_password.bootstrap` as a resource to be created with a
+state-persisted `result`.
+
+The module now uses an **`ephemeral "random_password"`** block (Terraform
+1.10+, random provider 3.7+). Ephemeral values are never written to state.
+`terraform plan` now shows the resource being *opened* rather than *created*,
+and no password-bearing resource appears in the planned set.
+
+`sensitive_body_version` is pinned so the regenerated ephemeral value does not
+churn the VM on every plan.
+
 ### The conflict
 
 | Requirement | Conflicting fact |
