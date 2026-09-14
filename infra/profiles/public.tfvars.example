@@ -1,0 +1,77 @@
+# ---------------------------------------------------------------------------
+# Public deployment pattern - EXAMPLE
+#
+# Copy to infra/profiles/public.tfvars and fill in the marked values, or set
+# the equivalent AZD_ / TF_VAR_ environment variables in your azd environment.
+#
+# NOTHING HERE IS A WORKING DEFAULT. Every blank is blank on purpose: the
+# model, region, tenant, and audience must be verified for your subscription
+# before anything is deployed. See docs/platform-validation.md gate G11.
+# ---------------------------------------------------------------------------
+
+deployment_profile = "public"
+
+# --- Target ----------------------------------------------------------------
+# Verify SEPARATELY: model GA status, regional availability, eligibility for
+# NEW deployments, available quota, and data-processing residency. A model
+# being listed is not the same as your subscription being able to deploy it.
+subscription_id  = "00000000-0000-0000-0000-000000000000"
+location         = "" # e.g. "eastus2" - must support APIM Standard v2 AND your model
+environment_name = "map-public"
+
+# --- Identity --------------------------------------------------------------
+# Single tenant. "common" and "organizations" are rejected by variable
+# validation: this is a single-tenant enterprise pattern.
+tenant_id = "00000000-0000-0000-0000-000000000000"
+
+# Gate G1: this must be the audience OBSERVED in a real access token, not a
+# ".default" scope string copied from documentation. Acquire a token with
+# scripts/show-token-audience.ps1 first and paste what you actually see.
+api_audience = ""
+
+# Gate G2: client application IDs permitted to call the gateway, matched
+# against azp (v2 tokens) or appid (v1 tokens).
+#   aebc6443-996d-45c2-90f0-388ff96faa56  VS Code's built-in Microsoft auth client
+#   04b07795-8ddb-461a-bbee-02f9e1bf7b46  Azure CLI
+# CONFIRM THESE against a real token before relying on them. An empty list
+# disables the check, which is a weaker posture.
+allowed_client_app_ids = []
+
+# Entra object IDs of the humans (or a group) who may call the model. This is
+# NOT automatically the principal running azd.
+inference_principal_ids = []
+
+# --- Model -----------------------------------------------------------------
+model_name            = "" # e.g. a current GA coding model
+model_version         = "" # exact version, pinned
+model_deployment_name = "coding-model"
+model_sku             = "" # e.g. "GlobalStandard" - affects residency
+model_capacity        = 0  # capacity-to-TPM conversion varies by model
+
+# --- Gateway ---------------------------------------------------------------
+apim_sku             = "StandardV2_1"
+apim_publisher_email = "" # team alias, not a personal address
+
+# Operational safeguards, not billing controls. Azure Cost Management remains
+# the financial source of truth.
+tokens_per_minute                = 20000
+daily_token_quota                = 100000
+max_concurrent_requests_per_user = 2
+max_request_bytes                = 65536
+backend_timeout_seconds          = 120
+
+# Leave false until gate G5 proves the quota 403 is reliably distinguishable
+# from an RBAC 403. Blanket-remapping 403 would mask real authorization
+# failures.
+normalize_quota_status_to_429 = false
+
+# --- Observability ---------------------------------------------------------
+# 100% sampling proves correlation in a reference environment. Lower it for
+# production volume.
+telemetry_sampling_percentage = 100
+log_retention_days            = 30
+
+tags = {
+  "cost-center" = ""
+  "owner"       = ""
+}

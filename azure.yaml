@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: mission-apimpossible
+metadata:
+  template: mission-apimpossible@1.0.0
+
+# No `services` block, deliberately.
+#
+# This sample has no application backend and no authentication shim. That is
+# the architectural point: the developer's own Entra identity reaches the
+# model through API Management, with nothing in between to deploy. azd is
+# used purely as the infrastructure lifecycle driver.
+#
+# Microsoft documents azd's Terraform integration as beta. That was accepted
+# as a tooling risk; the Azure runtime features this stack uses are GA.
+infra:
+  provider: terraform
+  path: infra
+
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      continueOnError: false
+      interactive: true
+      run: ./scripts/preflight.ps1
+    posix:
+      shell: sh
+      continueOnError: false
+      interactive: true
+      run: |
+        echo "Preflight is implemented in PowerShell (pwsh)."
+        echo "Install PowerShell 7 and run: pwsh ./scripts/preflight.ps1"
+        exit 1
+
+  postprovision:
+    windows:
+      shell: pwsh
+      continueOnError: false
+      interactive: false
+      run: ./scripts/postprovision.ps1
+    posix:
+      shell: sh
+      continueOnError: true
+      interactive: false
+      run: echo "Run 'pwsh ./scripts/postprovision.ps1' for the client configuration summary."

@@ -1,0 +1,115 @@
+# ---------------------------------------------------------------------------
+# Private deployment pattern - EXAMPLE
+#
+# Copy to infra/profiles/private.tfvars and fill in the marked values.
+#
+# This is the pattern that actually prevents the direct-Foundry bypass. It is
+# also the more expensive one: APIM Standard v2, a Bastion host billing from
+# the moment it is deployed, a jumpbox VM, and private endpoints.
+# ---------------------------------------------------------------------------
+
+deployment_profile = "private"
+
+# --- Target ----------------------------------------------------------------
+# The region must support APIM Standard v2, BOTH private endpoint types,
+# private-endpoint NSG enforcement, and your chosen model.
+subscription_id  = "00000000-0000-0000-0000-000000000000"
+location         = ""
+environment_name = "map-private"
+
+# --- Identity --------------------------------------------------------------
+tenant_id    = "00000000-0000-0000-0000-000000000000"
+api_audience = "" # gate G1: the OBSERVED audience, not a scope string
+
+allowed_client_app_ids = []
+
+# These humans hold Cognitive Services OpenAI User on the Foundry account.
+# They can authenticate to the model - and they still cannot reach it
+# directly, because the NSG on the Foundry private endpoint subnet denies
+# their subnet. That denial is the whole point of this pattern.
+inference_principal_ids = []
+
+# --- Model -----------------------------------------------------------------
+model_name            = ""
+model_version         = ""
+model_deployment_name = "coding-model"
+model_sku             = ""
+model_capacity        = 0
+
+# --- Gateway ---------------------------------------------------------------
+apim_sku             = "StandardV2_1"
+apim_publisher_email = ""
+
+tokens_per_minute                = 20000
+daily_token_quota                = 100000
+max_concurrent_requests_per_user = 2
+max_request_bytes                = 65536
+backend_timeout_seconds          = 120
+normalize_quota_status_to_429    = false
+
+telemetry_sampling_percentage = 100
+log_retention_days            = 30
+
+# --- Networking ------------------------------------------------------------
+# Split into /24s: APIM integration, PE-APIM, PE-OpenAI, jumpbox, Bastion.
+vnet_address_space = "10.42.0.0/16"
+
+# Corporate / VPN / ExpressRoute ranges that can reach this VNet.
+#
+# Setting these does TWO things:
+#   1. ALLOWS those ranges to reach the APIM gateway private endpoint;
+#   2. explicitly DENIES them direct access to the Foundry private endpoint.
+#
+# (2) is the important one. Private endpoints are reachable over peering,
+# VPN, and ExpressRoute under the default AllowVNetInBound rule, so without
+# an explicit deny a developer on the corporate network would bypass the
+# gateway entirely.
+#
+# This sample does NOT provision VPN or ExpressRoute. See
+# docs/enterprise-adoption.md.
+corporate_address_prefixes = []
+
+# --- Optional test access --------------------------------------------------
+# Creates a Windows jumpbox AND Azure Bastion, so the private path can be
+# exercised without corporate connectivity. Both or neither.
+#
+# Set to false when you already have VPN/ExpressRoute plus DNS forwarding to
+# the private zones.
+#
+# COST: Bastion bills from deployment regardless of use, and deallocating the
+# VM does not remove every charge.
+enable_test_access = true
+
+jumpbox_size = "Standard_D4s_v5"
+bastion_sku  = "Standard"
+
+# Entra object IDs granted Virtual Machine User Login on the jumpbox. Kept
+# separate from inference_principal_ids because signing in to a VM and
+# calling a model are different privileges.
+jumpbox_admin_principal_ids = []
+
+# ---------------------------------------------------------------------------
+# GATE G4 ACKNOWLEDGEMENT - required for the jumpbox, deliberately not
+# defaulted to true.
+#
+# Windows jumpbox access cannot currently satisfy all three agreed
+# requirements simultaneously:
+#
+#   * "GA only"            -> Entra RDP via the Bastion PORTAL is in PUBLIC
+#                             PREVIEW (Entra SSH in the portal is GA).
+#   * "passwordless"       -> native-client Entra RDP PROMPTS FOR A PASSWORD
+#                             after MFA, and requires the connecting PC to be
+#                             Entra joined to the same directory.
+#   * "no secret in state" -> handled here via AzAPI write-only sensitive_body,
+#                             but that approach is UNPROVEN against Azure.
+#
+# Read docs/private-test-access.md before setting this. Alternatives are
+# enable_test_access = false, or a Linux jumpbox where Entra SSH is GA and
+# genuinely passwordless.
+# ---------------------------------------------------------------------------
+acknowledge_unresolved_g4 = false
+
+tags = {
+  "cost-center" = ""
+  "owner"       = ""
+}
