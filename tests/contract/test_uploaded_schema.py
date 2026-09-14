@@ -25,7 +25,7 @@ from jsonschema import Draft7Validator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPO_ROOT / "specs" / "responses-request.schema.json"
-POLICY_PATH = REPO_ROOT / "policies" / "fragments" / "request-validation.xml"
+POLICY_PATH = REPO_ROOT / "policies" / "responses.xml"
 GATEWAY_TF = REPO_ROOT / "infra" / "modules" / "gateway" / "main.tf"
 
 SCHEMA_ID = "responses-request"
@@ -61,6 +61,9 @@ def test_policy_declares_schema_ref(policy_text: str) -> None:
     APIM would validate against the uploaded document's root, which is a
     wrapper object with no JSON Schema keywords - so every request would
     pass.
+
+    This lives in responses.xml (the operation policy), not in a fragment:
+    schema-id is API-scoped and a fragment has no API context.
     """
     match = re.search(r'schema-ref="([^"]+)"', policy_text)
     assert match, "validate-content must declare schema-ref, or it validates the wrapper root"

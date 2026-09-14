@@ -20,7 +20,61 @@
             <set-variable name="failure-category" value="invalid_request" />
             <set-variable name="rejected-status" value="415" />
             <!-- return-response cancels the pipeline; emit telemetry here. -->
-            <include-fragment fragment-id="map-observability" />
+            <!--
+                Trace inlined rather than included.
+
+                A policy FRAGMENT cannot contain <include-fragment>, and
+                return-response cancels the pipeline so outbound never runs.
+                Inlining is the only way this rejection emits telemetry.
+
+                EVERY value must be non-empty: an empty metadata value makes
+                APIM silently drop the fragment at creation time and throw at
+                runtime. Absent fields coalesce to "none", which
+                specs/telemetry.schema.json documents as the absent marker.
+
+                Field names match policies/fragments/observability.xml exactly
+                so the KQL in queries/ works uniformly across rejection and
+                success paths.
+            -->
+            <trace source="mission-apimpossible" severity="information">
+                <message>responses.invocation</message>
+                <metadata name="schema_version" value="1.0" />
+                <metadata name="environment" value="{{map-environment-name}}" />
+                <metadata name="model_deployment" value="{{map-approved-deployment}}" />
+                <metadata name="operation" value="responses.create" />
+                <metadata name="correlation_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;correlation-id&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="gateway_request_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;gateway-request-id&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="foundry_request_id" value="none" />
+                <metadata name="tenant_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-tid&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="object_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-oid&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="client_app_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-azp&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="status_code" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;rejected-status&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;0&quot; : v;
+                }" />
+                <metadata name="streaming" value="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;is-streaming&quot;, false).ToString())" />
+                <metadata name="failure_category" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;failure-category&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="apim_duration_ms" value="@(context.Elapsed.TotalMilliseconds.ToString(&quot;F0&quot;))" />
+                <metadata name="usage_source" value="unavailable" />
+            </trace>
             <return-response>
                 <set-status code="415" reason="Unsupported Media Type" />
                 <set-header name="Content-Type" exists-action="override">
@@ -43,32 +97,6 @@
         </when>
     </choose>
 
-    <!--
-        Structural and size validation against the committed schema, which
-        sets additionalProperties:false at every level. Unknown fields -
-        including Responses features that did not exist at review time - fail
-        closed instead of passing through.
-
-        schema-ref is REQUIRED, not optional. Terraform uploads the schema
-        nested under components.schemas, so the stored document root is a
-        wrapper object with no JSON Schema keywords. Validating against that
-        root would constrain nothing and the allowlist would silently fail
-        open. The pointer below selects the actual schema.
-
-        max-size sits well below the lowest documented APIM ceiling because
-        the documented ceilings conflict (gate G7).
-    -->
-    <validate-content unspecified-content-type-action="prevent"
-                      max-size="{{map-max-request-bytes}}"
-                      size-exceeded-action="prevent"
-                      errors-variable-name="content-validation-errors">
-        <content type="application/json"
-                 validate-as="json"
-                 action="prevent"
-                 schema-id="responses-request"
-                 schema-ref="#/components/schemas/responses-request" />
-    </validate-content>
-
     <!-- Parse once; keep the body intact for forwarding. -->
     <set-variable name="request-json" value="@(context.Request.Body.As&lt;JObject&gt;(preserveContent: true))" />
 
@@ -89,7 +117,61 @@
         <when condition="@((string)context.Variables[&quot;requested-model&quot;] != &quot;{{map-approved-deployment}}&quot;)">
             <set-variable name="failure-category" value="unapproved_model" />
             <set-variable name="rejected-status" value="400" />
-            <include-fragment fragment-id="map-observability" />
+            <!--
+                Trace inlined rather than included.
+
+                A policy FRAGMENT cannot contain <include-fragment>, and
+                return-response cancels the pipeline so outbound never runs.
+                Inlining is the only way this rejection emits telemetry.
+
+                EVERY value must be non-empty: an empty metadata value makes
+                APIM silently drop the fragment at creation time and throw at
+                runtime. Absent fields coalesce to "none", which
+                specs/telemetry.schema.json documents as the absent marker.
+
+                Field names match policies/fragments/observability.xml exactly
+                so the KQL in queries/ works uniformly across rejection and
+                success paths.
+            -->
+            <trace source="mission-apimpossible" severity="information">
+                <message>responses.invocation</message>
+                <metadata name="schema_version" value="1.0" />
+                <metadata name="environment" value="{{map-environment-name}}" />
+                <metadata name="model_deployment" value="{{map-approved-deployment}}" />
+                <metadata name="operation" value="responses.create" />
+                <metadata name="correlation_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;correlation-id&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="gateway_request_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;gateway-request-id&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="foundry_request_id" value="none" />
+                <metadata name="tenant_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-tid&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="object_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-oid&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="client_app_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-azp&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="status_code" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;rejected-status&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;0&quot; : v;
+                }" />
+                <metadata name="streaming" value="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;is-streaming&quot;, false).ToString())" />
+                <metadata name="failure_category" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;failure-category&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="apim_duration_ms" value="@(context.Elapsed.TotalMilliseconds.ToString(&quot;F0&quot;))" />
+                <metadata name="usage_source" value="unavailable" />
+            </trace>
             <return-response>
                 <set-status code="400" reason="Bad Request" />
                 <set-header name="Content-Type" exists-action="override">
@@ -136,7 +218,61 @@
         <when condition="@((bool)context.Variables[&quot;store-violation&quot;])">
             <set-variable name="failure-category" value="store_not_permitted" />
             <set-variable name="rejected-status" value="400" />
-            <include-fragment fragment-id="map-observability" />
+            <!--
+                Trace inlined rather than included.
+
+                A policy FRAGMENT cannot contain <include-fragment>, and
+                return-response cancels the pipeline so outbound never runs.
+                Inlining is the only way this rejection emits telemetry.
+
+                EVERY value must be non-empty: an empty metadata value makes
+                APIM silently drop the fragment at creation time and throw at
+                runtime. Absent fields coalesce to "none", which
+                specs/telemetry.schema.json documents as the absent marker.
+
+                Field names match policies/fragments/observability.xml exactly
+                so the KQL in queries/ works uniformly across rejection and
+                success paths.
+            -->
+            <trace source="mission-apimpossible" severity="information">
+                <message>responses.invocation</message>
+                <metadata name="schema_version" value="1.0" />
+                <metadata name="environment" value="{{map-environment-name}}" />
+                <metadata name="model_deployment" value="{{map-approved-deployment}}" />
+                <metadata name="operation" value="responses.create" />
+                <metadata name="correlation_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;correlation-id&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="gateway_request_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;gateway-request-id&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="foundry_request_id" value="none" />
+                <metadata name="tenant_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-tid&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="object_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-oid&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="client_app_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-azp&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="status_code" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;rejected-status&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;0&quot; : v;
+                }" />
+                <metadata name="streaming" value="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;is-streaming&quot;, false).ToString())" />
+                <metadata name="failure_category" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;failure-category&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="apim_duration_ms" value="@(context.Elapsed.TotalMilliseconds.ToString(&quot;F0&quot;))" />
+                <metadata name="usage_source" value="unavailable" />
+            </trace>
             <return-response>
                 <set-status code="400" reason="Bad Request" />
                 <set-header name="Content-Type" exists-action="override">

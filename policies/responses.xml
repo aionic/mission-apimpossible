@@ -26,7 +26,53 @@
 
         <include-fragment fragment-id="map-security-headers" />
         <include-fragment fragment-id="map-authentication" />
+
+        <!--
+            Business-rule validation runs BEFORE schema validation.
+
+            Both reject the same bad requests, but the order decides which
+            error the developer sees. The schema pins `store` to const false,
+            so if it ran first every store:true attempt would come back as a
+            generic "invalid_request" - technically correct and practically
+            useless. Running the fragment first returns the specific
+            `store_not_permitted` and `unapproved_model` codes that
+            docs/api-contract.md promises.
+
+            Schema validation still runs afterwards as defence in depth, and
+            is what catches unknown and future fields.
+        -->
         <include-fragment fragment-id="map-request-validation" />
+
+        <!--
+            Schema validation lives HERE, in the operation policy, rather than
+            in the request-validation fragment.
+
+            schema-id resolves against a SERVICE-level schema
+            (Microsoft.ApiManagement/service/schemas). An API-scoped schema is
+            not resolvable by schema-id at all, and a policy FRAGMENT has no
+            API context, so APIM silently refuses to create a fragment
+            containing this element - reported by Terraform as a misleading
+            "404 PolicyFragment not found". Verified against a live instance;
+            see docs/platform-validation.md.
+
+            schema-ref is required for a second reason: the schema is uploaded
+            nested under components.schemas, so validating against the
+            document root would enforce nothing.
+
+            max-size sits well below the lowest documented APIM ceiling
+            because the documented ceilings conflict (gate G7).
+        -->
+        <validate-content unspecified-content-type-action="prevent"
+                          max-size="{{map-max-request-bytes}}"
+                          size-exceeded-action="prevent"
+                          errors-variable-name="content-validation-errors">
+            <content type="application/json"
+                     validate-as="json"
+                     action="prevent"
+                     schema-id="responses-request"
+                     schema-ref="#/components/schemas/responses-request" />
+        </validate-content>
+
         <include-fragment fragment-id="map-token-governance" />
 
         <!--

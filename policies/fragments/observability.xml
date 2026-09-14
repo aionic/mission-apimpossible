@@ -12,67 +12,98 @@
     LastError text, backend bodies, backend URLs, resource IDs, or policy
     source.
 
-    INCLUDED FROM THREE PLACES, and all three are necessary:
-      * outbound  - successful calls;
-      * on-error  - validate-azure-ad-token failures and backend errors;
-      * inbound   - immediately before every policy-authored return-response.
-
-    The third is easy to miss. `return-response` CANCELS pipeline execution,
-    so neither outbound nor on-error runs after it. Without an explicit
-    include at each rejection site, gateway-authored rejections - app-only
-    tokens, unapproved clients, unapproved models, store:true - would produce
-    no telemetry at all, and the abuse signals behind those checks would be
-    invisible.
-
     tid and oid are PROTECTED PSEUDONYMOUS IDENTIFIERS. They belong in
     access-controlled logs and are prohibited as metric dimensions because of
     the documented cardinality limits.
 
-    The trace message is a fixed string with structured metadata, never
-    interpolated free text, so nothing user-controlled can be smuggled into a
-    message body.
+    ====================================================================
+    EVERY metadata value MUST be non-empty. This is not a style rule.
+
+    An empty value breaks APIM twice over, and both failures are silent:
+      * at CREATION time, a literal value="" makes the service accept the PUT
+        and then never create the fragment, which Terraform reports as a
+        misleading "404 PolicyFragment not found";
+      * at RUNTIME, an expression that evaluates to "" makes the trace throw,
+        surfacing as a blanket HTTP 500 on otherwise valid requests - with no
+        telemetry to diagnose it, because telemetry is the broken thing.
+
+    Several fields are legitimately absent on some paths: failure_category is
+    empty on success, foundry_request_id is empty when the backend returned no
+    request ID, and the identity claims are empty on a rejection that fires
+    before authentication. They therefore coalesce to the literal "none",
+    which specs/telemetry.schema.json documents as the absent marker.
+    Queries must treat "none" as ABSENT, never as a value.
+
+    Both failure modes were found by deploying. See docs/platform-validation.md.
+    ====================================================================
 -->
 <fragment>
     <trace source="mission-apimpossible" severity="information">
         <message>responses.invocation</message>
         <metadata name="schema_version" value="1.0" />
         <metadata name="environment" value="{{map-environment-name}}" />
-        <metadata name="correlation_id" value="@((string)context.Variables.GetValueOrDefault&lt;string&gt;(&quot;correlation-id&quot;, &quot;&quot;))" />
-        <metadata name="gateway_request_id" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;gateway-request-id&quot;, &quot;&quot;))" />
-        <metadata name="foundry_request_id" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;foundry-request-id&quot;, &quot;&quot;))" />
-        <metadata name="tenant_id" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-tid&quot;, &quot;&quot;))" />
-        <metadata name="object_id" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-oid&quot;, &quot;&quot;))" />
-        <metadata name="client_app_id" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-azp&quot;, &quot;&quot;))" />
         <metadata name="model_deployment" value="{{map-approved-deployment}}" />
         <metadata name="operation" value="responses.create" />
-        <!--
-            Status resolution order matters.
 
-            A policy-authored rejection runs this fragment from INBOUND, where
-            context.Response is still null. The rejecting policy sets
-            'rejected-status' immediately before returning, so that value is
-            preferred; context.Response is used for the normal outbound and
-            on-error paths. Without this, every gateway rejection would be
-            recorded as status 0.
+        <metadata name="correlation_id" value="@{
+            var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;correlation-id&quot;, &quot;&quot;);
+            return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+        }" />
+        <metadata name="gateway_request_id" value="@{
+            var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;gateway-request-id&quot;, &quot;&quot;);
+            return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+        }" />
+        <metadata name="foundry_request_id" value="@{
+            var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;foundry-request-id&quot;, &quot;&quot;);
+            return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+        }" />
+        <metadata name="tenant_id" value="@{
+            var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-tid&quot;, &quot;&quot;);
+            return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+        }" />
+        <metadata name="object_id" value="@{
+            var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-oid&quot;, &quot;&quot;);
+            return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+        }" />
+        <metadata name="client_app_id" value="@{
+            var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-azp&quot;, &quot;&quot;);
+            return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+        }" />
+
+        <!--
+            Status resolution order matters. A policy-authored rejection runs
+            this fragment from INBOUND, where context.Response is still null.
+            The rejecting policy sets 'rejected-status' immediately before
+            returning, so that value is preferred.
         -->
         <metadata name="status_code" value="@{
             var rejected = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;rejected-status&quot;, &quot;&quot;);
             if (!string.IsNullOrEmpty(rejected)) { return rejected; }
             return context.Response == null ? &quot;0&quot; : context.Response.StatusCode.ToString();
         }" />
+
         <metadata name="streaming" value="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;is-streaming&quot;, false).ToString())" />
-        <metadata name="failure_category" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;failure-category&quot;, &quot;&quot;))" />
+
+        <metadata name="failure_category" value="@{
+            var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;failure-category&quot;, &quot;&quot;);
+            return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+        }" />
+
         <!--
             Elapsed as the gateway measures it. For a streaming request this
             runs to stream completion or termination, so it is NOT model think
             time. Queries must not present it as such.
         -->
         <metadata name="apim_duration_ms" value="@(context.Elapsed.TotalMilliseconds.ToString(&quot;F0&quot;))" />
+
         <!--
             Usage AVAILABILITY, not usage values. A final SSE usage event may
             never arrive, so downstream queries must distinguish "absent" from
             "zero" - see specs/telemetry.schema.json.
         -->
-        <metadata name="usage_source" value="@(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;usage-source&quot;, &quot;unavailable&quot;))" />
+        <metadata name="usage_source" value="@{
+            var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;usage-source&quot;, &quot;&quot;);
+            return string.IsNullOrEmpty(v) ? &quot;unavailable&quot; : v;
+        }" />
     </trace>
 </fragment>

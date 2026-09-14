@@ -101,6 +101,21 @@ resource "azurerm_role_assignment" "apim_metrics_publisher" {
 # ---------------------------------------------------------------------------
 # Logger: Entra-authenticated, no instrumentation key in the resource
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Logger: Entra-authenticated ingestion
+#
+# identity_client_id = "SystemAssigned" is REQUIRED, not cosmetic.
+#
+# Application Insights has local (key-based) authentication DISABLED, which is
+# the posture this repository argues for. Without telling the logger to use the
+# gateway's managed identity, APIM falls back to connection-string ingestion,
+# that ingestion is refused, and every `trace` policy throws - surfacing as a
+# blanket HTTP 500 on requests that are otherwise completely valid, with no
+# telemetry to diagnose it because the telemetry path is the thing that is
+# broken.
+#
+# Found by deploying. See docs/platform-validation.md.
+# ---------------------------------------------------------------------------
 resource "azurerm_api_management_logger" "app_insights" {
   name                = "map-appinsights"
   api_management_name = azurerm_api_management.main.name
@@ -109,7 +124,7 @@ resource "azurerm_api_management_logger" "app_insights" {
 
   application_insights {
     connection_string  = var.app_insights_connection_string
-    identity_client_id = null # system-assigned
+    identity_client_id = "SystemAssigned"
   }
 
   depends_on = [azurerm_role_assignment.apim_metrics_publisher]
@@ -130,21 +145,39 @@ resource "azurerm_api_management_named_value" "config" {
 }
 
 # ---------------------------------------------------------------------------
-# Request schema
+# Request schema  --  SERVICE-level, not API-level
+#
+# This distinction cost a deployment cycle and is worth stating plainly.
+#
+# The validate-content reference says schema-id is "the name of an existing
+# schema that was added to the API Management INSTANCE". An API-scoped schema
+# (azurerm_api_management_api_schema, which lives at /apis/{id}/schemas/{id})
+# is NOT resolvable by schema-id - the policy fails to apply with
+# "The schema responses-request does not exist", even though the schema is
+# plainly visible on the API.
+#
+# azurerm_api_management_global_schema creates the service-level resource
+# (Microsoft.ApiManagement/service/schemas) that schema-id actually resolves.
 #
 # The committed JSON Schema is uploaded verbatim, so the contract enforced at
-# runtime is the same artifact reviewed in the repository.
+# runtime is the same artifact reviewed in the repository. It is wrapped in
+# components.schemas so the policy's schema-ref pointer has something to
+# select.
 # ---------------------------------------------------------------------------
-resource "azurerm_api_management_api_schema" "responses_request" {
-  api_name            = azurerm_api_management_api.responses.name
+resource "azurerm_api_management_global_schema" "responses_request" {
+  schema_id           = "responses-request"
   api_management_name = azurerm_api_management.main.name
   resource_group_name = var.resource_group_name
-  schema_id           = "responses-request"
-  content_type        = "application/vnd.oai.openapi.components+json"
+  type                = "json"
+  description         = "Mission APIMpossible allowlisted Responses request."
 
-  components = jsonencode({
-    schemas = {
-      "responses-request" = jsondecode(file("${path.module}/../../../specs/responses-request.schema.json"))
+  value = jsonencode({
+    components = {
+      schemas = {
+        "responses-request" = jsondecode(
+          file("${path.module}/../../../specs/responses-request.schema.json")
+        )
+      }
     }
   })
 }
@@ -198,6 +231,21 @@ resource "azurerm_api_management_api_operation" "create_response" {
   url_template        = "/responses"
   description         = "The only operation this gateway exposes."
 
+  # Declaring the request representation is not documentation - it is load
+  # bearing. `validate-content` treats any content type absent from the API
+  # definition as "unspecified", so without this the policy rejects every
+  # request with:
+  #   400 "Unspecified content type application/json is not allowed."
+  #
+  # With it declared, unspecified-content-type-action="prevent" keeps its
+  # intended meaning: reject genuinely unexpected content types, and validate
+  # JSON bodies against the schema.
+  request {
+    representation {
+      content_type = "application/json"
+    }
+  }
+
   response {
     status_code = 200
   }
@@ -240,7 +288,7 @@ resource "azurerm_api_management_api_operation_policy" "create_response" {
   depends_on = [
     azurerm_api_management_policy_fragment.fragments,
     azurerm_api_management_backend.foundry,
-    azurerm_api_management_api_schema.responses_request,
+    azurerm_api_management_global_schema.responses_request,
   ]
 }
 
@@ -306,22 +354,40 @@ resource "azurerm_monitor_diagnostic_setting" "apim" {
 # ---------------------------------------------------------------------------
 # Built-in all-access subscription
 #
-# Every APIM instance ships with one. It is disabled here WITHOUT calling
-# ListSecrets, which is why this is AzAPI: the AzureRM subscription resource
-# reads and stores both keys in state (gate G9).
+# Every APIM instance ships with one. It is suspended here.
+#
+# Two things had to be right, and both were found by deploying:
+#
+# 1. METHOD. A PUT is rejected with
+#      ValidationError: Subscription scope should be one of '/apis',
+#      '/apis/{apiId}', '/products/{productId}'
+#    because the built-in subscription's scope is the SERVICE ROOT, which is
+#    not a writable scope value. PATCH succeeds - it does not revalidate the
+#    unchanged scope. Hence azapi_resource_action with method = "PATCH"
+#    rather than azapi_update_resource, which only issues PUT.
+#
+# 2. RESPONSE HANDLING. The API returns primaryKey and secondaryKey in the
+#    PATCH response body. response_export_values is therefore pinned to an
+#    empty list so no key material is captured into Terraform state - which
+#    is the whole reason this is not the AzureRM subscription resource
+#    (gate G9).
 #
 # The API already sets subscription_required = false, so this is defence in
 # depth rather than the primary control.
 # ---------------------------------------------------------------------------
-resource "azapi_update_resource" "disable_builtin_subscription" {
+resource "azapi_resource_action" "disable_builtin_subscription" {
   type        = "Microsoft.ApiManagement/service/subscriptions@2024-05-01"
   resource_id = "${azurerm_api_management.main.id}/subscriptions/master"
+  method      = "PATCH"
 
   body = {
     properties = {
       state = "suspended"
     }
   }
+
+  # Explicitly export nothing. The response carries subscription keys.
+  response_export_values = []
 
   depends_on = [azurerm_api_management.main]
 }

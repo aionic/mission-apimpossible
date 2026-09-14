@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/aionic/mission-apimpossible/specs/telemetry.schema.json",
   "title": "Mission APIMpossible - gateway observability record",
-  "description": "The metadata-only record emitted per inference request. Every field here is either non-sensitive or a protected pseudonymous identifier. Prompt text, model output, tokens, tool arguments, file contents, UPNs, email addresses, and display names are prohibited and have no representation in this schema.",
+  "description": "The metadata-only record emitted per inference request. Every field here is either non-sensitive or a protected pseudonymous identifier. Prompt text, model output, tokens, tool arguments, file contents, UPNs, email addresses, and display names are prohibited and have no representation in this schema. ABSENT MARKER: string fields that are legitimately absent on some paths carry the literal 'none' rather than an empty string, because APIM silently rejects a policy whose trace metadata evaluates to empty. Queries must treat 'none' as absent, never as a value.",
   "type": "object",
   "additionalProperties": false,
   "required": [

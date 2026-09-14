@@ -9,7 +9,6 @@
 -->
 <policies>
     <inbound>
-        <base />
 
         <!--
             Correlation is established at GLOBAL scope, before anything else,
@@ -49,11 +48,23 @@
     </inbound>
 
     <backend>
-        <base />
+        <!--
+            forward-request must be EXPLICIT here.
+
+            At global scope <base /> is not allowed (there is no parent to
+            inherit from), and an empty <backend /> means "never forward" -
+            every request then fails with a 500 that looks like a backend
+            fault. APIM's own default global policy contains exactly this
+            element for the same reason.
+
+            The operation policy overrides this with its own forward-request,
+            which adds the timeout and the buffer-response="false" that SSE
+            depends on.
+        -->
+        <forward-request />
     </backend>
 
     <outbound>
-        <base />
 
         <!-- HSTS. The gateway is HTTPS-only; say so. -->
         <set-header name="Strict-Transport-Security" exists-action="override">
@@ -71,6 +82,5 @@
     </outbound>
 
     <on-error>
-        <base />
     </on-error>
 </policies>

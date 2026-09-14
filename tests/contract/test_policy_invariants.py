@@ -212,8 +212,12 @@ def test_every_return_response_emits_telemetry() -> None:
             siblings = list(parent)
             preceding = siblings[: siblings.index(element)]
 
+            # Telemetry may come from including the observability fragment
+            # (valid in a POLICY) or from an inline <trace> (required inside a
+            # FRAGMENT, which cannot nest includes - see the test below).
             emits_telemetry = any(
-                sib.tag == "include-fragment" and sib.get("fragment-id") == "map-observability"
+                (sib.tag == "include-fragment" and sib.get("fragment-id") == "map-observability")
+                or sib.tag == "trace"
                 for sib in preceding
             )
             sets_status = any(
@@ -223,13 +227,80 @@ def test_every_return_response_emits_telemetry() -> None:
 
             location = f"{path.name}:<{parent.tag}>"
             assert emits_telemetry, (
-                f"{location}: return-response is not preceded by a "
-                f"map-observability include, so this rejection emits no telemetry"
+                f"{location}: return-response is preceded by neither a "
+                f"map-observability include nor an inline <trace>, so this "
+                f"rejection emits no telemetry"
             )
             assert sets_status, (
                 f"{location}: return-response does not set rejected-status, "
                 f"so it would be recorded as status 0"
             )
+
+
+def test_no_fragment_includes_another_fragment() -> None:
+    """A policy FRAGMENT cannot contain <include-fragment>.
+
+    Policies (global.xml, responses.xml) CAN include fragments. Only nesting
+    inside a fragment is rejected.
+    """
+    from xml.etree import ElementTree  # noqa: S405
+
+    for path in sorted((POLICY_DIR / "fragments").glob("*.xml")):
+        root = ElementTree.parse(path).getroot()  # noqa: S314
+        assert not list(root.iter("include-fragment")), (
+            f"{path.name} contains <include-fragment>. Inline the content instead."
+        )
+
+
+def test_no_empty_trace_metadata_values() -> None:
+    """An empty `value=""` on <metadata> makes APIM silently drop the fragment.
+
+    This is a genuinely nasty failure mode, found only by deploying: the PUT
+    returns success, the fragment is never created, and Terraform reports
+    "404 PolicyFragment not found" while polling - which looks like a race
+    condition and is not one.
+
+    Use an expression that evaluates to an empty string at runtime
+    (`GetValueOrDefault(..., "")`) rather than an empty attribute.
+    """
+    from xml.etree import ElementTree  # noqa: S405
+
+    for path in policy_files():
+        root = ElementTree.parse(path).getroot()  # noqa: S314
+        for meta in root.iter("metadata"):
+            value = meta.get("value")
+            assert value, (
+                f"{path.name}: <metadata name=\"{meta.get('name')}\"> has an empty "
+                f'value. APIM silently refuses to create the fragment. Use an '
+                f'expression returning "" instead.'
+            )
+
+
+def test_schema_validation_is_not_inside_a_fragment() -> None:
+    """`schema-id` resolves against an API-scoped schema.
+
+    A policy FRAGMENT is service-scoped and has no API context, so APIM
+    silently refuses to create a fragment containing a schema reference -
+    same misleading 404 as above. validate-content with schema-id therefore
+    belongs in the operation policy.
+    """
+    from xml.etree import ElementTree  # noqa: S405
+
+    for path in sorted((POLICY_DIR / "fragments").glob("*.xml")):
+        root = ElementTree.parse(path).getroot()  # noqa: S314
+        for content in root.iter("content"):
+            assert not content.get("schema-id"), (
+                f"{path.name} references schema-id inside a fragment. Fragments "
+                f"have no API context; move validate-content to the operation policy."
+            )
+
+    # ...and it must still exist where it belongs.
+    operation = ElementTree.parse(POLICY_DIR / "responses.xml").getroot()  # noqa: S314
+    refs = [c.get("schema-ref") for c in operation.iter("content")]
+    assert "#/components/schemas/responses-request" in refs, (
+        "responses.xml must validate against the uploaded schema; without it "
+        "the request allowlist enforces nothing"
+    )
 
 
 def test_schema_validation_declares_a_pointer() -> None:
@@ -239,5 +310,5 @@ def test_schema_validation_declares_a_pointer() -> None:
     against that document's root enforces nothing, so the entire request
     allowlist would silently fail open.
     """
-    text = policy_body(POLICY_DIR / "fragments" / "request-validation.xml")
+    text = policy_body(POLICY_DIR / "responses.xml")
     assert 'schema-ref="#/components/schemas/responses-request"' in text
