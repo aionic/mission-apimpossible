@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/aionic/mission-apimpossible/specs/responses-request.schema.json",
+  "title": "Mission APIMpossible - allowlisted Responses request",
+  "description": "A deliberately narrow subset of the Azure OpenAI v1 Responses request. This is an enterprise allowlist, not a pass-through proxy: anything not named here is rejected. Adding a field requires a documented threat model. See docs/security.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["model", "input"],
+  "properties": {
+    "model": {
+      "description": "Must equal the single approved deployment name. APIM re-checks this against the configured allowlist; schema validation alone is not the control.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "input": {
+      "description": "Either a single text prompt or a bounded, text-only message history maintained by the client. No opaque input items, no file or image parts, no URL-bearing structures.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 49152
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 40,
+          "items": { "$ref": "#/definitions/textMessage" }
+        }
+      ]
+    },
+    "instructions": {
+      "description": "System-style guidance applied to this single stateless request.",
+      "type": "string",
+      "maxLength": 8192
+    },
+    "stream": {
+      "description": "Server-sent events. APIM forwards the stream without buffering.",
+      "type": "boolean"
+    },
+    "store": {
+      "description": "Must be literal boolean false when present. APIM rejects true and injects false when the field is omitted, so no response is persisted server-side. This governs Responses storage; it is not a claim that all service-side abuse-monitoring retention is disabled.",
+      "type": "boolean",
+      "const": false
+    },
+    "max_output_tokens": {
+      "description": "Bounded output. The deployed model may impose a lower ceiling.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4096
+    },
+    "temperature": {
+      "description": "Only forwarded when the approved model supports it. Reasoning models reject this field; the client should omit it.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2
+    },
+    "top_p": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "reasoning": {
+      "description": "Reasoning controls only. Encrypted reasoning items are deliberately not enabled in the initial contract; enabling them requires an explicit feature review.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "effort": {
+          "type": "string",
+          "enum": ["minimal", "low", "medium", "high"]
+        }
+      }
+    },
+    "metadata": {
+      "description": "Caller-supplied labels. Never used for authorization and never treated as identity.",
+      "type": "object",
+      "maxProperties": 8,
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 128
+      }
+    }
+  },
+  "definitions": {
+    "textMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "content"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["system", "developer", "user", "assistant"]
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 49152
+        }
+      }
+    }
+  }
+}

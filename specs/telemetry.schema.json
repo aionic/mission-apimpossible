@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/aionic/mission-apimpossible/specs/telemetry.schema.json",
+  "title": "Mission APIMpossible - gateway observability record",
+  "description": "The metadata-only record emitted per inference request. Every field here is either non-sensitive or a protected pseudonymous identifier. Prompt text, model output, tokens, tool arguments, file contents, UPNs, email addresses, and display names are prohibited and have no representation in this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "timestamp",
+    "environment",
+    "correlation_id",
+    "trace_id",
+    "apim_request_id",
+    "operation",
+    "status_code",
+    "streaming"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Incremented when fields are added or semantics change, so queries can detect shape drift.",
+      "type": "string",
+      "const": "1.0"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "environment": {
+      "description": "Deployment environment name. Low cardinality; safe as a metric dimension.",
+      "type": "string",
+      "maxLength": 32
+    },
+    "deployment_profile": {
+      "type": "string",
+      "enum": ["public", "private"]
+    },
+    "correlation_id": {
+      "description": "Canonical application correlation GUID. Telemetry only - never used for authentication or authorization.",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "trace_id": {
+      "description": "W3C trace identifier, surfaced as operation_Id in Application Insights.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "apim_request_id": {
+      "description": "Gateway request identifier from context.RequestId. Distinct from trace_id.",
+      "type": "string"
+    },
+    "foundry_request_id": {
+      "description": "Backend apim-request-id response header. A support handle for raising a case with Microsoft; NOT a joinable trace segment. Null when the backend did not return one.",
+      "type": ["string", "null"]
+    },
+    "tenant_id": {
+      "description": "Validated tid claim. Protected pseudonymous identifier: permitted in access-controlled logs, prohibited as a metric dimension.",
+      "type": "string"
+    },
+    "object_id": {
+      "description": "Validated oid claim. Protected pseudonymous identifier. Never a UPN, email, or display name, and never a metric dimension because of cardinality limits.",
+      "type": "string"
+    },
+    "client_app_id": {
+      "description": "Validated azp or appid claim identifying the calling application.",
+      "type": ["string", "null"]
+    },
+    "model_deployment": {
+      "description": "Approved deployment name. Low cardinality; safe as a metric dimension.",
+      "type": "string"
+    },
+    "operation": {
+      "type": "string",
+      "const": "responses.create"
+    },
+    "status_code": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599
+    },
+    "outcome": {
+      "description": "Terminal outcome. An SSE error can arrive under HTTP 200, so status_code alone does not establish generation success.",
+      "type": "string",
+      "enum": ["completed", "incomplete", "client_disconnected", "gateway_rejected", "backend_error", "unknown"]
+    },
+    "failure_category": {
+      "description": "Safe failure taxonomy. Never raw LastError text, backend bodies, or policy source.",
+      "type": ["string", "null"],
+      "enum": [
+        "missing_token",
+        "invalid_token",
+        "wrong_tenant",
+        "not_delegated_identity",
+        "unapproved_client",
+        "forbidden_rbac",
+        "invalid_request",
+        "unapproved_model",
+        "store_not_permitted",
+        "payload_too_large",
+        "rate_limited",
+        "quota_exceeded",
+        "backend_unavailable",
+        "backend_timeout",
+        null
+      ]
+    },
+    "streaming": {
+      "type": "boolean"
+    },
+    "apim_duration_ms": {
+      "description": "Gateway-observed duration. For streaming this measures until the stream completes or terminates, not model think time.",
+      "type": ["number", "null"]
+    },
+    "backend_duration_ms": {
+      "type": ["number", "null"]
+    },
+    "usage": {
+      "description": "Nullable by design. Usage may be absent for aborted streams and is ESTIMATED for streaming prompts regardless of policy configuration. Absent usage must never be recorded as zero.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "output_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "total_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "source": {
+          "description": "Whether the counts were reported by the backend or estimated by the gateway. Required so aggregates never conflate the two.",
+          "type": "string",
+          "enum": ["reported", "estimated", "partial", "unavailable"]
+        }
+      },
+      "required": ["source"]
+    }
+  }
+}
