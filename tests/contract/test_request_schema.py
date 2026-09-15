@@ -106,14 +106,16 @@ def test_store_may_be_omitted(validator: Draft7Validator) -> None:
         ("previous_response_id", "resp_abc123", "server-side conversation state"),
         ("conversation", {"id": "conv_1"}, "server-side conversation state"),
         ("background", True, "async execution outside the governance window"),
-        ("tools", [{"type": "web_search"}], "external interaction"),
-        ("tool_choice", "auto", "external interaction"),
-        ("functions", [{"name": "f"}], "external interaction"),
+        ("tools", [{"type": "web_search"}], "SERVER-SIDE execution"),
+        ("tools", [{"type": "code_interpreter"}], "SERVER-SIDE execution"),
+        ("tools", [{"type": "file_search"}], "SERVER-SIDE execution"),
+        ("tools", [{"type": "mcp", "server_url": "https://x"}], "SERVER-SIDE execution"),
+        ("tools", [{"type": "computer_use_preview"}], "SERVER-SIDE execution"),
+        ("functions", [{"name": "f"}], "superseded, unreviewed shape"),
         ("prompt", {"id": "pmpt_1"}, "server-side stored artifact"),
         ("multi_agent", {"enabled": True}, "server-side subagent execution"),
         ("context_management", {"compact_threshold": 100}, "server-side compaction"),
         ("truncation", "auto", "not reviewed"),
-        ("parallel_tool_calls", True, "external interaction"),
         ("include", ["reasoning.encrypted_content"], "not reviewed"),
         ("service_tier", "flex", "not reviewed"),
     ],
@@ -224,3 +226,123 @@ def test_model_name_injection_shape_is_rejected(validator: Draft7Validator) -> N
     """The pattern bounds what can reach the policy's model comparison."""
     assert not is_valid(validator, valid_request(model="../../other-deployment"))
     assert not is_valid(validator, valid_request(model="model name with spaces"))
+
+
+# ---------------------------------------------------------------------------
+# Client-side tools: accepted. Hosted tools: never.
+#
+# The boundary that matters is NOT "no tools" - it is "no SERVER-SIDE
+# execution". A client-side function tool is an ordinary request/response as
+# far as the service is concerned: the model asks, the CALLER decides whether
+# to run it, and execution happens on the developer's machine. A hosted tool
+# moves execution into the service, which is the thing this contract exists to
+# prevent.
+#
+# Copilot hides models without tool calling from agent mode - the DEFAULT mode
+# - so refusing all tools made the gateway effectively invisible in normal use.
+# ---------------------------------------------------------------------------
+
+
+def test_client_side_function_tool_is_accepted(validator: Draft7Validator) -> None:
+    assert is_valid(
+        validator,
+        valid_request(
+            tools=[
+                {
+                    "type": "function",
+                    "name": "read_file",
+                    "description": "Read a file from the workspace.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                    },
+                }
+            ]
+        ),
+    )
+
+
+@pytest.mark.parametrize("choice", ["auto", "none", "required"])
+def test_tool_choice_strings_are_accepted(validator: Draft7Validator, choice: str) -> None:
+    assert is_valid(validator, valid_request(tool_choice=choice))
+
+
+def test_tool_choice_can_name_a_function(validator: Draft7Validator) -> None:
+    assert is_valid(validator, valid_request(tool_choice={"type": "function", "name": "read_file"}))
+
+
+def test_tool_choice_cannot_name_a_hosted_tool(validator: Draft7Validator) -> None:
+    assert not is_valid(
+        validator, valid_request(tool_choice={"type": "web_search", "name": "search"})
+    )
+
+
+def test_a_tool_without_a_type_is_rejected(validator: Draft7Validator) -> None:
+    # Absent type must not be treated as "probably a function".
+    assert not is_valid(validator, valid_request(tools=[{"name": "read_file"}]))
+
+
+def test_one_hosted_tool_poisons_an_otherwise_valid_list(
+    validator: Draft7Validator,
+) -> None:
+    # Validation is per item, so a hosted tool hidden among legitimate ones
+    # must still fail the whole request.
+    assert not is_valid(
+        validator,
+        valid_request(
+            tools=[
+                {"type": "function", "name": "ok"},
+                {"type": "code_interpreter"},
+            ]
+        ),
+    )
+
+
+def test_function_call_and_result_items_are_accepted(validator: Draft7Validator) -> None:
+    # The client replaying its own tool loop: the model asked, the client ran
+    # it locally, and this is the result going back.
+    body = valid_request()
+    body["input"] = [
+        {"role": "user", "content": "What is in config.json?"},
+        {
+            "type": "function_call",
+            "call_id": "call_abc123",
+            "name": "read_file",
+            "arguments": '{"path": "config.json"}',
+        },
+        {"type": "function_call_output", "call_id": "call_abc123", "output": "{}"},
+    ]
+    assert is_valid(validator, body)
+
+
+def test_tool_arguments_must_be_a_string_not_an_object(
+    validator: Draft7Validator,
+) -> None:
+    # The Responses API carries arguments as a JSON STRING. Accepting an object
+    # would let a caller smuggle arbitrary structure past a bounded field.
+    body = valid_request()
+    body["input"] = [
+        {
+            "type": "function_call",
+            "call_id": "call_abc123",
+            "name": "read_file",
+            "arguments": {"path": "config.json"},
+        }
+    ]
+    assert not is_valid(validator, body)
+
+
+def test_a_function_call_item_cannot_carry_extra_properties(
+    validator: Draft7Validator,
+) -> None:
+    body = valid_request()
+    body["input"] = [
+        {
+            "type": "function_call",
+            "call_id": "c1",
+            "name": "f",
+            "arguments": "{}",
+            "server_url": "https://evil.example",
+        }
+    ]
+    assert not is_valid(validator, body)

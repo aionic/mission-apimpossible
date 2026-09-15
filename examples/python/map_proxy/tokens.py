@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import hmac
 import logging
+import os
 import secrets
+import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import Any, Protocol
 
 logger = logging.getLogger("map_proxy")
@@ -32,8 +35,72 @@ _REFRESH_SKEW_SECONDS = 300
 
 
 def generate_session_secret() -> str:
-    """Generates the per-session secret the IDE will present."""
+    """Generates a fresh local secret."""
     return secrets.token_urlsafe(_SECRET_BYTES)
+
+
+def default_key_path() -> Path:
+    """Where the local key lives.
+
+    Under LOCALAPPDATA / XDG_STATE_HOME rather than the repository, so it is
+    never at risk of being committed and is not shared between machines.
+    """
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    return base / "mission-apimpossible" / "proxy.key"
+
+
+def _restrict_to_current_user(path: Path) -> None:
+    """Removes access for everyone except the owner.
+
+    This is the whole point of the key file, so a failure to lock it down is
+    reported rather than ignored.
+
+    On Windows a file inherits the directory ACL, which for LOCALAPPDATA is
+    already user-scoped - but inheritance is easy to break and worth asserting
+    explicitly. icacls is used rather than a pywin32 dependency.
+    """
+    if os.name == "nt":
+        user = os.environ.get("USERNAME", "")
+        if not user:
+            return
+        subprocess.run(  # noqa: S603
+            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:(R,W)"],  # noqa: S607
+            check=False,
+            capture_output=True,
+        )
+    else:
+        path.chmod(0o600)
+
+
+def load_or_create_key(path: Path | None = None, *, rotate: bool = False) -> str:
+    """Returns the persistent local key, creating it on first use.
+
+    Persistent rather than per-session deliberately. A key that changed on
+    every start would have to be re-pasted into the IDE every start, and a
+    tool that demands a fresh secret each morning is a tool people stop using -
+    or worse, one they work around by disabling authentication entirely.
+
+    The key is not an Azure credential and grants nothing off this machine. It
+    exists because loopback is NOT private: on Windows any local user account
+    can reach 127.0.0.1, so without it a second user on a shared machine could
+    obtain inference as the signed-in developer.
+    """
+    key_path = path or default_key_path()
+
+    if key_path.exists() and not rotate:
+        existing = key_path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+
+    secret = generate_session_secret()
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    key_path.write_text(secret, encoding="utf-8")
+    _restrict_to_current_user(key_path)
+    logger.info("Wrote a new local proxy key to %s", key_path)
+    return secret
 
 
 def secret_matches(presented: str | None, expected: str) -> bool:

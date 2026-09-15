@@ -317,6 +317,93 @@
     </choose>
 
     <!--
+        Hosted tools are rejected UNCONDITIONALLY.
+
+        code_interpreter, file_search, mcp, computer_use and web_search all
+        move execution to the SERVICE. Client-side function tools do not: the
+        model asks, the CALLER decides whether to run it, and execution stays
+        on the developer's machine. As far as this gateway is concerned that is
+        an ordinary request/response.
+
+        "The service never executes anything on my behalf" is the property this
+        gateway protects, and no configuration switch relaxes it.
+
+        The schema already pins tools[].type to the const "function". This is
+        the defence in depth that survives a schema mistake - and schema
+        mistakes in this repository have shipped before: a missing schema-ref
+        once made the entire request allowlist a runtime no-op.
+    -->
+    <set-variable name="hosted-tool-requested" value="@{
+        var body = (JObject)context.Variables[&quot;request-json&quot;];
+        var tools = body[&quot;tools&quot;] as JArray;
+        if (tools == null) { return false; }
+        foreach (var tool in tools) {
+            var type = tool[&quot;type&quot;];
+            if (type == null || type.ToString() != &quot;function&quot;) { return true; }
+        }
+        return false;
+    }" />
+
+    <choose>
+        <when condition="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;hosted-tool-requested&quot;, false))">
+            <set-variable name="failure-category" value="hosted_tool_not_permitted" />
+            <set-variable name="rejected-status" value="400" />
+            <trace source="mission-apimpossible" severity="information">
+                <message>responses.invocation</message>
+                <metadata name="schema_version" value="1.0" />
+                <metadata name="environment" value="{{map-environment-name}}" />
+                <metadata name="model_deployment" value="{{map-approved-deployment}}" />
+                <metadata name="operation" value="responses.create" />
+                <metadata name="correlation_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;correlation-id&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="gateway_request_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;gateway-request-id&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="foundry_request_id" value="none" />
+                <metadata name="tenant_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-tid&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="object_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-oid&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="client_app_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-azp&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="status_code" value="400" />
+                <metadata name="streaming" value="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;is-streaming&quot;, false).ToString())" />
+                <metadata name="failure_category" value="hosted_tool_not_permitted" />
+                <metadata name="apim_duration_ms" value="@(context.Elapsed.TotalMilliseconds.ToString(&quot;F0&quot;))" />
+                <metadata name="usage_source" value="unavailable" />
+            </trace>
+            <return-response>
+                <set-status code="400" reason="Bad Request" />
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                </set-header>
+                <set-header name="x-correlation-id" exists-action="override">
+                    <value>@((string)context.Variables["correlation-id"])</value>
+                </set-header>
+                <set-body>@{
+                    var payload = new JObject(
+                        new JProperty("error", new JObject(
+                            new JProperty("code", "hosted_tool_not_permitted"),
+                            new JProperty("message", "Only client-side function tools are accepted. Hosted tools execute on the service rather than on your machine."),
+                            new JProperty("correlation_id", (string)context.Variables["correlation-id"])
+                        ))
+                    );
+                    return payload.ToString(Newtonsoft.Json.Formatting.None);
+                }</set-body>
+            </return-response>
+        </when>
+    </choose>
+
+    <!--
         Stateless enforcement.
 
         Explicit store:true is REJECTED rather than rewritten. Silently

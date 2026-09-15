@@ -2,8 +2,10 @@
 
     uv run python -m map_proxy
 
-Prints the loopback URL, the session key, and a ready-to-paste
-``chatLanguageModels.json`` block, then serves until interrupted.
+Writes the IDE configuration, then serves until interrupted. There is nothing
+to copy, nothing to paste, and no prompt: the goal is that Foundry behaves like
+any other provider, and a provider that demands a hand-pasted secret every
+morning is not that.
 """
 
 from __future__ import annotations
@@ -13,10 +15,17 @@ import contextlib
 import json
 import logging
 import sys
+from pathlib import Path
 
 from map_proxy.capture import Capture
 from map_proxy.config import ModelEntry, ProxyConfig, ProxyConfigError
-from map_proxy.tokens import TokenProvider, build_credential, generate_session_secret
+from map_proxy.ide_config import build_provider_entry, write_vscode_config
+from map_proxy.tokens import (
+    TokenProvider,
+    build_credential,
+    default_key_path,
+    load_or_create_key,
+)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -48,64 +57,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Include PROMPT TEXT in the capture. The file will contain your source code.",
     )
+    parser.add_argument(
+        "--rotate-key",
+        action="store_true",
+        help="Generate a new local key and rewrite the IDE configuration.",
+    )
+    parser.add_argument(
+        "--no-ide-config",
+        action="store_true",
+        help="Do not touch the IDE configuration; print it instead.",
+    )
     parser.add_argument("--verbose", action="store_true", help="Debug logging.")
     return parser.parse_args(argv)
-
-
-def _config_snippet(config: ProxyConfig) -> str:
-    """The VS Code Custom Endpoint block, ready to paste.
-
-    Three details matter and are easy to get wrong:
-
-    * ``apiType: "responses"`` - so Copilot speaks the API the gateway exposes
-      and no translation is needed anywhere.
-    * ``zeroDataRetentionEnabled: true`` - makes VS Code send ``store: false``
-      and never chain ``previous_response_id``, matching the gateway contract.
-    * the full URL including ``/v1/responses`` - VS Code otherwise infers a
-      path, and the inference is a naive substring check.
-
-    The URL must also never contain ``openai.azure``: VS Code switches to
-    ``api-key`` authentication on that substring alone, and the proxy expects a
-    bearer token.
-    """
-    models = [
-        {
-            "id": m.deployment,
-            "name": m.display_name,
-            "url": f"http://127.0.0.1:{config.port}/v1/responses",
-            "apiType": "responses",
-            "zeroDataRetentionEnabled": True,
-            "toolCalling": False,
-            "vision": False,
-            "streaming": True,
-            "maxInputTokens": m.max_input_tokens,
-            "maxOutputTokens": m.max_output_tokens,
-            "requestHeaders": {"Authorization": "Bearer ${apiKey}"},
-        }
-        for m in config.models
-    ]
-
-    return json.dumps(
-        [
-            {
-                "name": "Mission APIMpossible",
-                "vendor": "customendpoint",
-                "apiKey": "${input:missionApimpossibleKey}",
-                "models": models,
-            }
-        ],
-        indent=2,
-    )
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
-    # Python block-buffers stdout when it is not a terminal. The session key is
-    # printed to stdout, so under any wrapper that pipes output - a task
-    # runner, a terminal multiplexer, CI - the banner would not appear until
-    # the process exited, and the key it contains is needed while it runs.
-    sys.stdout.reconfigure(line_buffering=True)
+    # Python block-buffers stdout when it is not a terminal, so under any
+    # wrapper that pipes output this banner would not appear until the process
+    # exited.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -130,7 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
 
-    secret = generate_session_secret()
+    key = load_or_create_key(rotate=args.rotate_key)
+
     capture = (
         Capture(config.capture_path, include_text=args.capture_text)
         if config.capture_path
@@ -139,7 +113,10 @@ def main(argv: list[str] | None = None) -> int:
 
     tokens = TokenProvider(build_credential(config.tenant_id), config.scope)
 
-    # Deferred so the banner is not printed before a configuration error.
+    written: Path | None = None
+    if not args.no_ide_config:
+        written = write_vscode_config(config, key)
+
     from map_proxy.server import build_app, run
 
     print()
@@ -152,26 +129,34 @@ def main(argv: list[str] | None = None) -> int:
     if capture is not None:
         print(f"  Capturing  {capture.path}")
     print()
-    print("  Session key - paste this when the IDE asks for an API key:")
+
+    if written is not None:
+        print(f"  VS Code configured: {written}")
+        print("  Reload the window, then pick the model in Chat. Nothing to paste.")
+    elif args.no_ide_config:
+        print("  Add this to your IDE's chatLanguageModels.json:")
+        print()
+        for line in json.dumps([build_provider_entry(config, key)], indent=2).splitlines():
+            print(f"    {line}")
+    else:
+        print("  No VS Code installation found; skipped IDE configuration.")
+        print("  Re-run with --no-ide-config to print the block instead.")
+
     print()
-    print(f"      {secret}")
+    print(f"  Local key  {default_key_path()}")
+    print("  It is not an Azure credential and grants nothing off this machine.")
+    print("  It exists because loopback is not private: on Windows any local")
+    print("  user account can reach 127.0.0.1. Rotate it with --rotate-key.")
     print()
-    print("  It is not an Azure credential. It authorises this local listener")
-    print("  and nothing else, it never leaves this machine, and it dies when")
-    print("  this process does.")
-    print()
-    print("  VS Code: run 'Chat: Manage Language Models' and paste:")
-    print()
-    for line in _config_snippet(config).splitlines():
-        print(f"    {line}")
+    print("  Your Entra sign-in is what actually reaches the model.")
     print()
     print("  Ctrl+C to stop.")
     print()
 
     with contextlib.suppress(KeyboardInterrupt):
-        run(build_app(config, tokens, secret, capture), config.port)
+        run(build_app(config, tokens, key, capture), config.port)
 
-    print("\n  Stopped. The session key is now invalid.")
+    print("\n  Stopped.")
     return 0
 
 
