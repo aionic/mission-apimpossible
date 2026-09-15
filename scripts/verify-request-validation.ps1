@@ -64,6 +64,14 @@ function Add-Case {
         })
 }
 
+# --- positive control -------------------------------------------------------
+# Without this, the whole suite passes against a gateway that rejects
+# EVERYTHING, which is not the property under test. Every other case here
+# expects a rejection, so at least one request must be shown to get through.
+Add-Case -Name 'valid baseline request (control)' `
+    -Why 'proves the suite is not passing merely because nothing works' `
+    -Bytes $utf8.GetBytes((New-Body)) -Expect @(200)
+
 # --- size boundary -----------------------------------------------------------
 # Padding goes in `input`, so the aggregate-text limit may bite before the
 # transport limit. Either is a correct rejection; passing is not.

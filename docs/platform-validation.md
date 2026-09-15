@@ -451,7 +451,57 @@ remove rather than claiming a perfect allowlist.
 | --- | --- |
 | Conservative 64 KiB cap is within every documented ceiling | Documented |
 | Immutable transport headers | Documented |
-| Behavior with missing `Content-Length`, chunked, and compressed bodies | **Pending** |
+| Behavior with missing `Content-Length`, chunked, and compressed bodies | **Empirical — see below** |
+
+### Empirical: 14 hostile requests, all fail closed
+
+Reproduce with `scripts/verify-request-validation.ps1`. Uses `HttpClient`
+rather than `Invoke-WebRequest` because these cases need exact byte counts,
+chunked framing with no `Content-Length`, raw invalid UTF-8, gzip content
+coding, and JSON that `ConvertTo-Json` will not produce.
+
+A **500 is a failure here even when the request is garbage**, and so is a 200.
+Every rejection is additionally checked for an `x-correlation-id` and scanned
+for leaked internals (backend hostnames, `Microsoft.ApiManagement`, stack
+traces, bearer tokens).
+
+The suite also carries a **positive control** — one valid request that must
+return 200. Without it the whole suite would pass against a gateway that
+rejects everything, which is not the property under test.
+
+| Case | Result |
+| --- | --- |
+| valid baseline request (control) | 200 |
+| body just under the cap | 400 |
+| body over the cap | 400 |
+| chunked, no `Content-Length` | 400 |
+| gzip `Content-Encoding` | 400 |
+| malformed UTF-8 | 400 |
+| duplicate `store` key (`false` then `true`) | 400 |
+| explicit `store:true` | 400 |
+| `store` as the string `"false"` | 400 |
+| deeply nested JSON (200 levels) | 400 |
+| unknown top-level property (`previous_response_id`) | 400 |
+| `tools` array | 400 |
+| truncated JSON | 400 |
+| `text/plain` content type | 415 |
+
+**Two real defects, both found only by sending these.** The offline suite was
+green throughout.
+
+1. **Malformed UTF-8 returned 200 and reached the model.** APIM's JSON reader
+   substitutes U+FFFD for invalid byte sequences rather than rejecting them, so
+   a body containing `C3 28 A0 A1` was silently repaired and forwarded. "Fail
+   closed on unsupported encodings" was simply untrue. Fixed with a byte-exact
+   UTF-8 round-trip check — see D7 for why the obvious `UTF8Encoding` approach
+   cannot be used.
+
+2. **Truncated JSON returned 500 `backend_error`.** `Body.As<JObject>()` threw,
+   the exception fell through to `on-error`, and a **client** mistake was
+   reported as a **backend** fault. That is worse than an unhelpful status: it
+   points whoever is on call at the wrong system entirely.
+
+Both now reject with 400 and a sanitized `invalid_request`.
 
 ---
 
@@ -692,7 +742,7 @@ records a verified tuple.
 | **G4 Windows access** | **`map-p07` completion** | Yes — module exists, gated by a variable that fails closed |
 | G5 llm policies | 429 normalization only | Enforcement **proven**; concurrency limits measured and documented |
 | G6 correlation | Observability acceptance | Yes |
-| G7 ceilings | Final size cap | Yes — conservative cap chosen |
+| G7 ceilings | Final size cap | **Proven** — 14 hostile cases fail closed; two defects found and fixed |
 | G8 bypass | Private-pattern acceptance | Deployed, verified, destroyed; inside-VNet half blocked by G4 |
 | G9 state | State acceptance | **Audited** — 23 resources, zero violations |
 | G10 telemetry | Privacy acceptance | Yes — excluded by default |
