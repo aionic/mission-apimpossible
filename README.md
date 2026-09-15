@@ -1,5 +1,7 @@
 # Mission APIMpossible
 
+![Mission APIMpossible — same identity, all the way through](docs/images/mission-apimpossible.png)
+
 **Your identity reaches the model. The gateway governs the request without becoming the caller.**
 
 A production-quality reference for secure, identity-aware AI-assisted coding:
@@ -12,17 +14,33 @@ VS Code                      Microsoft Entra user token
    │                         x-correlation-id + traceparent
    ▼
 Azure API Management         validate the human, govern the request,
-   │                         forward the SAME token unchanged
+   │                         attach the backend credential per identity_mode
    ▼
 Azure OpenAI v1              POST /openai/v1/responses
-   │                         Entra RBAC authorizes that same human
+   │                         brokered (default): the gateway's managed identity
+   │                         calls, carrying the validated human oid as
+   │                         user_security_context — so no human holds
+   │                         inference RBAC and the direct bypass is
+   │                         eliminated by capability
    ▼
 Coding model
 ```
 
-No Foundry Agent Service. No application backend. No authentication shim. No
-API keys, no client secrets, no on-behalf-of exchange, and no managed identity
-standing in for the developer.
+Set `identity_mode = "passthrough"` instead and the developer's original token
+is forwarded unchanged, so Foundry independently authorizes that same human.
+Both modes are implemented and documented; the trade between them is real and
+explained in [identity modes](docs/identity-modes.md).
+
+No Foundry Agent Service. No application backend. No API keys, no client
+secrets, no on-behalf-of exchange, and no managed identity standing in for the
+developer.
+
+> **One qualified exception.** Using the gateway from an IDE that only
+> understands API keys requires a small **local** process that presents a
+> key-shaped surface and forwards your real Entra token. It runs as you, on
+> your machine, and substitutes no identity — a courier, not a shim. Recorded
+> deliberately, with its costs, in [local proxy](docs/local-proxy.md) and
+> threat model T18.
 
 ---
 
