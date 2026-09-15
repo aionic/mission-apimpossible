@@ -270,8 +270,16 @@ export function activate(extensionContext: vscode.ExtensionContext): void {
               `Sign out through the VS Code Accounts menu - this extension stores no token.`,
           );
         } else {
+          // Deliberately NOT "you are not signed in". This check is silent
+          // (createIfNone: false), so it returns nothing whenever VS Code has
+          // no CACHED session for this particular scope set - which is the
+          // normal state before the first run, even for someone already
+          // signed into VS Code. Saying "not signed in" sends people to the
+          // Accounts menu to fix something that is not broken.
           vscode.window.showInformationMessage(
-            `Mission APIMpossible: not signed in to tenant ${config.tenantId}.`,
+            `Mission APIMpossible: no cached session yet for tenant ${config.tenantId} ` +
+              `and scope ${config.scope}. This is normal before the first run - ` +
+              `run "Send a prompt" and VS Code will ask you to sign in.`,
           );
         }
       } catch (error) {
