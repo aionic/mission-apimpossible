@@ -122,6 +122,30 @@ U+FFFD still round-trips cleanly, so there is no false rejection.
 the allowed list before use.** An offline XML check cannot catch this, because
 the XML is perfectly well-formed.
 
+### D8 — Teardown fails on a resource Azure created for you
+
+Application Insights automatically provisions a Smart Detector alert rule named
+`Failure Anomalies - <app-insights-name>`. No Terraform resource declares it,
+and no provider flag prevents it.
+
+`terraform destroy` therefore removes all 33 resources it owns, then fails on
+the final step:
+
+```text
+Error: deleting Resource Group "rg-...": the Resource Group still contains Resources.
+```
+
+The message never names the offending resource, so the obvious next move is to
+go hunting in the portal. `az resource list -g <rg>` returns exactly one row.
+
+Handled by `scripts/predown.ps1`, wired as an azd `predown` hook so it runs
+*before* the confusing failure rather than after it. The script only deletes
+rules whose name begins with `Failure Anomalies - `, and only in the named
+resource group; anything else is reported and left alone.
+
+Verified afterwards: the resource group is gone, and neither APIM nor Foundry
+left a soft-deleted service behind to block name reuse.
+
 ### Methodology note: policy propagation is not instant
 
 Several intermediate bisection results in this investigation were **wrong**
