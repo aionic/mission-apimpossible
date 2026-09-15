@@ -252,12 +252,42 @@ the flow.
 > surface a clear error naming the tenant, rather than silently falling back to
 > a different authority or to a non-human credential.
 
+### Verified against the shipped bundle
+
+The claims above were originally read from `main` on GitHub, which is not
+necessarily what any given installation runs. They have now been confirmed in
+the **shipped** `microsoft-authentication` bundle of the exact build in use
+(VS Code Insiders 1.137, commit `f44f55cde0`):
+
+```js
+getTenant(e, r) {
+  if (r?.path) { let n = r.path.split("/")[1]; if (n) return n }
+  return e.reduce((n, i) => i.startsWith("VSCODE_TENANT:")
+    ? i.split("VSCODE_TENANT:")[1] : n, void 0) ?? x$
+}
+
+getScopesToSend(e) {
+  let r = e.filter(i => !i.startsWith("VSCODE_"));   // stripped before the request
+  ...
+}
+```
+
+Both behaviours hold: `VSCODE_TENANT:<guid>` selects the authority, and every
+`VSCODE_`-prefixed entry is filtered out before the token request, so it never
+reaches Entra as a requested permission. A `VSCODE_CLIENT_ID:` sibling exists
+in the same reducer.
+
+This raises the evidence from "source-observed on a branch" to "verified in the
+binary being run". It does **not** make it documented API - the guidance above
+still stands, because a bundle can change in any update without notice.
+
 | Check | Status |
 | --- | --- |
 | `getSession` availability and options | Documented |
-| Tenant pinning via `VSCODE_TENANT:` | Source-observed |
+| Tenant pinning via `VSCODE_TENANT:` | **Verified in the shipped bundle** (still not documented API) |
+| `VSCODE_*` scopes stripped before the token request | **Verified in the shipped bundle** |
 | Host compatibility constraints for forks | Source-observed |
-| Real interactive sign-in, consent, refresh, sign-out, cancel | **Pending** |
+| Real interactive sign-in, consent, refresh, sign-out, cancel | **Pending — needs a human at the keyboard** |
 
 ---
 
