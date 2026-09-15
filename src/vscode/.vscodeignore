@@ -1,0 +1,19 @@
+# Keeps the published VSIX to what the extension actually needs at runtime.
+#
+# Without this file, vsce ships the TypeScript sources including src/test/**,
+# which is build-time material with no business in a distributed package.
+
+.vscode/**
+.vscode-test/**
+
+# Sources. out/ carries the compiled JavaScript that actually runs.
+src/**
+tsconfig.json
+.eslintrc*
+
+# Build and test artefacts
+out/test/**
+out/**/*.map
+node_modules/**
+*.vsix
+test-output.txt
