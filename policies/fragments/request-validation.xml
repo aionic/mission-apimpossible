@@ -97,7 +97,129 @@
         </when>
     </choose>
 
-    <!-- Parse once; keep the body intact for forwarding. -->
+    <!--
+        Decode and parse defensively, BEFORE anything reads the body as JSON.
+
+        Two defects found by gate G7 (scripts/verify-request-validation.ps1)
+        made this block necessary. Both were invisible offline:
+
+        1. Malformed UTF-8 returned HTTP 200 and REACHED THE MODEL. APIM's
+           JSON reader substitutes U+FFFD for invalid byte sequences rather
+           than rejecting them, so a body containing C3 28 A0 A1 was silently
+           repaired and forwarded. "Fail closed on unsupported encodings" was
+           simply not true. Strict decoding - UTF8Encoding(false, true) throws
+           on invalid bytes instead of substituting - is what makes it true.
+
+        2. Truncated JSON returned HTTP 500 backend_error. The bare
+           Body.As<JObject>() below threw, the exception fell through to
+           on-error, and a CLIENT mistake was reported as a BACKEND fault.
+           That is worse than an unhelpful status: it points whoever is on
+           call at the wrong system.
+
+        Parsing twice is deliberate. The body is already materialized and
+        capped at {{map-max-request-bytes}} bytes, so the cost is bounded and
+        known, and the alternative - smuggling a parsed object and an error
+        string through one variable - is harder to read than it is worth.
+
+        The UTF-8 check is a byte-exact ROUND TRIP rather than a strict
+        decoder. The obvious implementation,
+        new System.Text.UTF8Encoding(false, true), throws on invalid bytes and
+        would read better - but UTF8Encoding is not in APIM's allowed policy
+        expression types, and APIM rejects the fragment ASYNCHRONOUSLY: the
+        ARM PUT returns 200, then provisioning silently moves to Failed with
+        no error message anywhere. Only System.Text.Encoding is permitted.
+
+        Round-tripping is exact rather than a heuristic. Valid UTF-8 decodes
+        and re-encodes byte-for-byte; an invalid sequence is replaced with
+        U+FFFD (EF BF BD) and the bytes no longer match. A body that
+        legitimately contains U+FFFD still round-trips cleanly, so there is no
+        false rejection.
+    -->
+    <set-variable name="body-error" value="@{
+        try {
+            var bytes = context.Request.Body.As&lt;byte[]&gt;(preserveContent: true);
+            var text = System.Text.Encoding.UTF8.GetString(bytes);
+            var round = System.Text.Encoding.UTF8.GetBytes(text);
+            if (round.Length != bytes.Length) {
+                return &quot;Request body is not valid UTF-8.&quot;;
+            }
+            for (int i = 0; i &lt; round.Length; i++) {
+                if (round[i] != bytes[i]) {
+                    return &quot;Request body is not valid UTF-8.&quot;;
+                }
+            }
+            var probe = context.Request.Body.As&lt;JObject&gt;(preserveContent: true);
+            return &quot;&quot;;
+        } catch {
+            return &quot;Request body is not valid JSON.&quot;;
+        }
+    }" />
+
+    <choose>
+        <when condition="@(!string.IsNullOrEmpty(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;body-error&quot;, &quot;&quot;)))">
+            <set-variable name="failure-category" value="invalid_request" />
+            <set-variable name="rejected-status" value="400" />
+            <!--
+                Trace inlined rather than included: a fragment cannot contain
+                <include-fragment>, and return-response cancels the pipeline so
+                outbound never runs. Every value must be non-empty.
+            -->
+            <trace source="mission-apimpossible" severity="information">
+                <message>responses.invocation</message>
+                <metadata name="schema_version" value="1.0" />
+                <metadata name="environment" value="{{map-environment-name}}" />
+                <metadata name="model_deployment" value="{{map-approved-deployment}}" />
+                <metadata name="operation" value="responses.create" />
+                <metadata name="correlation_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;correlation-id&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="gateway_request_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;gateway-request-id&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="foundry_request_id" value="none" />
+                <metadata name="tenant_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-tid&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="object_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-oid&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="client_app_id" value="@{
+                    var v = context.Variables.GetValueOrDefault&lt;string&gt;(&quot;claim-azp&quot;, &quot;&quot;);
+                    return string.IsNullOrEmpty(v) ? &quot;none&quot; : v;
+                }" />
+                <metadata name="status_code" value="400" />
+                <metadata name="streaming" value="@(context.Variables.GetValueOrDefault&lt;bool&gt;(&quot;is-streaming&quot;, false).ToString())" />
+                <metadata name="failure_category" value="invalid_request" />
+                <metadata name="apim_duration_ms" value="@(context.Elapsed.TotalMilliseconds.ToString(&quot;F0&quot;))" />
+                <metadata name="usage_source" value="unavailable" />
+            </trace>
+            <return-response>
+                <set-status code="400" reason="Bad Request" />
+                <set-header name="Content-Type" exists-action="override">
+                    <value>application/json</value>
+                </set-header>
+                <set-header name="x-correlation-id" exists-action="override">
+                    <value>@((string)context.Variables["correlation-id"])</value>
+                </set-header>
+                <set-body>@{
+                    var payload = new JObject(
+                        new JProperty("error", new JObject(
+                            new JProperty("code", "invalid_request"),
+                            new JProperty("message", (string)context.Variables["body-error"]),
+                            new JProperty("correlation_id", (string)context.Variables["correlation-id"])
+                        ))
+                    );
+                    return payload.ToString(Newtonsoft.Json.Formatting.None);
+                }</set-body>
+            </return-response>
+        </when>
+    </choose>
+
+    <!-- Safe now: the body is known to be valid UTF-8 and valid JSON. -->
     <set-variable name="request-json" value="@(context.Request.Body.As&lt;JObject&gt;(preserveContent: true))" />
 
     <!--

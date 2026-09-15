@@ -393,3 +393,46 @@ def test_schema_validation_declares_a_pointer() -> None:
     """
     text = policy_body(POLICY_DIR / "responses.xml")
     assert 'schema-ref="#/components/schemas/responses-request"' in text
+
+
+# Types that read naturally in a policy expression and are NOT in APIM's
+# allowed .NET type list. Referencing one fails ASYNCHRONOUSLY: the ARM PUT
+# returns 200, provisioning silently moves to Failed, and no error message is
+# produced anywhere. Terraform reports only "polling failed". See D7 in
+# docs/platform-validation.md.
+DISALLOWED_EXPRESSION_TYPES = {
+    "UTF8Encoding": "use System.Text.Encoding.UTF8 and round-trip the bytes",
+    "ASCIIEncoding": "use System.Text.Encoding.ASCII",
+    "UnicodeEncoding": "use System.Text.Encoding.Unicode",
+    "DecoderFallback": "not permitted; round-trip the bytes instead",
+    "EncoderFallback": "not permitted; round-trip the bytes instead",
+    "StreamReader": "read the body with context.Request.Body.As<T>()",
+    "FileStream": "policy expressions have no file system access",
+    "HttpClient": "use <send-request> instead",
+    "WebClient": "use <send-request> instead",
+    "Process": "policy expressions cannot start processes",
+    "Assembly": "reflection is not permitted",
+    "Activator": "reflection is not permitted",
+}
+
+
+@pytest.mark.parametrize(("type_name", "remedy"), sorted(DISALLOWED_EXPRESSION_TYPES.items()))
+def test_policy_expressions_avoid_disallowed_types(
+    all_policy_text: str, type_name: str, remedy: str
+) -> None:
+    """Reject .NET types APIM will not accept in a policy expression.
+
+    Offline XML validation cannot catch these, because the XML is perfectly
+    well-formed - the rejection happens server-side, asynchronously, with no
+    diagnostic anywhere. This test is the only cheap way to find out before
+    deploying.
+
+    Comments are stripped first, because the fragments legitimately NAME these
+    types when explaining why they are not used.
+    """
+    without_comments = re.sub(r"<!--.*?-->", "", all_policy_text, flags=re.DOTALL)
+    assert type_name not in without_comments, (
+        f"A policy expression references {type_name}, which APIM does not allow. "
+        f"It fails asynchronously with no error message: {remedy}. "
+        f"See D7 in docs/platform-validation.md."
+    )

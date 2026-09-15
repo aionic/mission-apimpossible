@@ -89,6 +89,39 @@ Without a `request { representation { content_type = "application/json" } }`
 block on the operation, the policy rejects every request with
 `Unspecified content type application/json is not allowed`.
 
+### D7 — Policy expressions may only use APIM's allowed .NET types, and a violation fails **asynchronously and silently**
+
+Strict UTF-8 validation naturally wants
+`new System.Text.UTF8Encoding(false, true)`, whose decoder throws on invalid
+bytes instead of substituting. `UTF8Encoding` is **not** in APIM's allowed
+policy-expression type list; only `System.Text.Encoding` is.
+
+The failure mode is the problem. The ARM `PUT` returns **HTTP 200** with
+`ProvisioningState: InProgress`, and the fragment then moves to
+`ProvisioningState: Failed` — carrying **no error message, anywhere**.
+Terraform surfaces only `polling after CreateOrUpdate: polling failed`, which
+names neither the expression nor the type. Nothing in the portal, the activity
+log, or the resource body says which construct was rejected.
+
+Diagnosis requires `PUT`ing the fragment directly and polling the resource,
+then bisecting the expression by hand.
+
+The working form round-trips the bytes using only permitted types:
+
+```csharp
+var bytes = context.Request.Body.As<byte[]>(preserveContent: true);
+var text  = System.Text.Encoding.UTF8.GetString(bytes);
+var round = System.Text.Encoding.UTF8.GetBytes(text);
+// valid UTF-8 round-trips byte-for-byte; invalid bytes become U+FFFD and differ
+```
+
+This is exact rather than heuristic, and a body that legitimately contains
+U+FFFD still round-trips cleanly, so there is no false rejection.
+
+**Rule: any new type referenced in a policy expression must be checked against
+the allowed list before use.** An offline XML check cannot catch this, because
+the XML is perfectly well-formed.
+
 ### Methodology note: policy propagation is not instant
 
 Several intermediate bisection results in this investigation were **wrong**
@@ -449,11 +482,83 @@ boundary; a developer can supply the hostname and address manually.
 
 | Check | Status |
 | --- | --- |
-| Simultaneous private inbound + outbound integration | Documented |
-| Public disablement must follow PE creation | Documented |
-| PE alone is insufficient against authorized humans | Documented |
-| APIM succeeds and direct Foundry fails from the jumpbox | **Pending — the central private-pattern proof** |
-| Repeated `terraform apply` never reopens public access | **Pending** |
+| Simultaneous private inbound + outbound integration | **Empirical** — `publicNetworkAccess: Disabled` with `virtualNetworkType: External`, both PEs Approved |
+| Public disablement must follow PE creation | **Empirical** — ordered bootstrap applied cleanly |
+| PE alone is insufficient against authorized humans | Documented; mitigated by NSG rules below |
+| Authorized human blocked from the public internet | **Empirical — see below** |
+| Repeated `terraform apply` never reopens public access | **Empirical** — second apply reported `No changes`, `0 added, 0 changed, 0 destroyed`, both endpoints still `Disabled` |
+| APIM succeeds and direct Foundry fails **from the jumpbox** | **Blocked by G4** — the inside-the-VNet half is unproven |
+
+### Empirical: deployed once to a second resource group, verified, destroyed
+
+Deployed to `rg-map-map-private-*` in an isolated Terraform workspace, so the
+public environment could not be touched.
+
+**A fresh apply found a bug the public deployment had hidden.**
+`azurerm_role_assignment.inference_broker` used
+`count = var.identity_mode == "brokered" && var.broker_principal_id != null`.
+That is fine when APIM already exists, and fails on a clean deployment with
+`Invalid count argument`, because the gateway's principal ID is unknown until
+it is created. The public environment never hit it — brokered mode was applied
+in place to an existing gateway. The null check moved to a `precondition`,
+which Terraform defers to apply time. **A pattern converted in place is not a
+pattern that has been deployed.**
+
+**Measured posture:**
+
+| Control | Observed |
+| --- | --- |
+| APIM `publicNetworkAccess` | `Disabled` |
+| Foundry `publicNetworkAccess` | `Disabled` |
+| Foundry `networkAcls` | `defaultAction: Deny`, `bypass: None`, no IP or VNet rules |
+| Foundry `disableLocalAuth` | `true` |
+| Private endpoints | `pe-apim`, `pe-openai`, both `Approved` |
+
+**Anti-bypass NSG rules on the Foundry PE subnet**, in priority order:
+
+| Priority | Rule | Effect |
+| --- | --- | --- |
+| 100 | `Allow-APIM-Integration-Only` | 10.43.0.0/24 → PE :443 |
+| 200 | `Deny-Jumpbox-Direct-To-Model` | 10.43.3.0/24 → PE, all ports |
+| 4000 | `Deny-All-Other-VNet-Traffic` | everything else |
+
+The jumpbox is allowed to reach the gateway PE on 443 and explicitly denied the
+model PE — both ahead of the default `AllowVNetInBound`.
+
+**The authorized-human test, and why the first attempt proved nothing.**
+Calling Foundry directly from the public internet returned 401, which looks
+like a pass and is not one: in brokered mode no human holds inference RBAC, so
+that 401 cannot distinguish a network block from an RBAC block. The claim under
+test is specifically that the *network* stops an *authorized* caller.
+
+Granting the test identity `Cognitive Services OpenAI User` at account scope and
+retrying settles it. The error text changed, which is the tell:
+
+| Stage | Response |
+| --- | --- |
+| Before RBAC | 401 — *"lacks the required data action `...OpenAI/responses/write`"* |
+| After RBAC propagated | 401 — *"Principal does not have access to API/Operation."* |
+
+The specific dataAction complaint disappears, confirming RBAC took effect, and
+access is **still denied**. The network boundary holds against an authorized
+principal. The grant was removed immediately afterwards.
+
+**Operational warning — Foundry hides the reason, APIM states it.** Compare the
+two denials for the same network condition:
+
+- APIM: `403 ... Request originated from client public IP address 172.200.70.13,
+  public network access on this Microsoft.ApiManagement/service/... is disabled.`
+- Foundry: `401 PermissionDenied ... does not have access to API/Operation.`
+
+Foundry reports a **network** denial with an **authorization-shaped 401** and
+never mentions the network. Anyone debugging this will reasonably conclude they
+have an RBAC problem and go grant permissions that are already correct. When a
+private-pattern call fails, check `publicNetworkAccess` and the effective NSG
+rules *before* touching role assignments.
+
+**Still unproven, and not claimed:** that a developer inside the VNet succeeds
+through the gateway. That requires the jumpbox, which G4 blocks. The private
+pattern is therefore verified as *closed* but not yet verified as *usable*.
 
 ---
 
