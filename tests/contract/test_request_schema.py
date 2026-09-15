@@ -459,3 +459,51 @@ def test_a_realistic_agent_tool_catalogue_is_accepted(
         for i in range(88)
     ]
     assert is_valid(validator, valid_request(tools=tools))
+
+
+def test_a_real_world_tool_description_is_accepted(validator: Draft7Validator) -> None:
+    """The single field that rejected every GitHub Copilot agent request.
+
+    The bound was 4096, invented rather than measured. VS Code's
+    ``run_in_terminal`` tool ships a 5,859-character description - tool
+    descriptions are prompt engineering, not labels - so one tool out of 88
+    failed the whole request, and the gateway's sanitised error could not say
+    which. Finding it needed a local capture and offline validation.
+    """
+    tools = [
+        {
+            "type": "function",
+            "name": "run_in_terminal",
+            "description": "x" * 5859,
+            "parameters": {"type": "object", "properties": {}},
+            "strict": None,
+        }
+    ]
+    assert is_valid(validator, valid_request(tools=tools))
+
+
+def test_mcp_style_tool_names_are_accepted(validator: Draft7Validator) -> None:
+    # Measured longest from a real catalogue: 56 characters. MCP-namespaced
+    # names concatenate server and tool identifiers, so they grow with nesting.
+    tools = [
+        {
+            "type": "function",
+            "name": "activate_fallback_mcp_pylance_mcp_s_pylancePythonDebug_1",
+            "parameters": {"type": "object", "properties": {}},
+        }
+    ]
+    assert is_valid(validator, valid_request(tools=tools))
+
+
+def test_tool_bounds_still_exist(validator: Draft7Validator) -> None:
+    # Raising a bound because reality needed it is not the same as removing it.
+    assert not is_valid(
+        validator,
+        valid_request(tools=[{"type": "function", "name": "x", "description": "y" * 32769}]),
+    )
+    assert not is_valid(
+        validator, valid_request(tools=[{"type": "function", "name": "x" * 129}])
+    )
+    assert not is_valid(
+        validator, valid_request(tools=[{"type": "function", "name": "has space"}])
+    )

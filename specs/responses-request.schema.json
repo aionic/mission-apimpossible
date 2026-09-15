@@ -112,8 +112,8 @@
                   "name": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 64,
-                    "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9._-]{1,128}$"
                   },
                   "arguments": {
                     "comment": "A JSON string produced by the model. Bounded, and never parsed or executed by the gateway.",
@@ -202,12 +202,17 @@
         "properties": {
           "type": { "type": "string", "const": "function" },
           "name": {
+            "comment": "128 chars. Measured longest from a real VS Code tool catalogue: 56 ('activate_fallback_mcp_pylance_mcp_s_pylancePythonDebug_1'). MCP-namespaced names concatenate server and tool identifiers, so they grow with nesting depth. Dots are permitted because MCP naming commonly uses them; the value is an opaque identifier that is never used as a path or an expression.",
             "type": "string",
             "minLength": 1,
-            "maxLength": 64,
-            "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._-]{1,128}$"
           },
-          "description": { "type": "string", "maxLength": 4096 },
+          "description": {
+            "comment": "32 KiB. This was 4096 and it was the single reason every GitHub Copilot agent request was rejected: the run_in_terminal tool alone ships a 5,859-character description. Tool descriptions are prompt engineering, not labels, and they get long. The bound exists to stop an unbounded field, not to second-guess a client's prompt.",
+            "type": "string",
+            "maxLength": 32768
+          },
           "parameters": {
             "description": "A JSON Schema for the tool's arguments, passed through as an opaque object. The gateway does not interpret it.",
             "type": "object"
@@ -227,10 +232,11 @@
           "properties": {
             "type": { "type": "string", "const": "function" },
             "name": {
+              "comment": "Must match the bound on tools[].name, or a caller could name a tool it is not allowed to declare.",
               "type": "string",
               "minLength": 1,
-              "maxLength": 64,
-              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._-]{1,128}$"
             }
           }
         }
