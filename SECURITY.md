@@ -59,4 +59,4 @@ in your own tenant.
 ## Supported versions
 
 The `main` branch only. Pinned dependency versions are recorded in
-[`docs/versions.md`](docs/versions.md).
+[`docs/deployment.md`](docs/deployment.md).

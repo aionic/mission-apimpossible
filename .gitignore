@@ -80,6 +80,20 @@ artifacts/
 *.har
 *.trace
 test-results/
+test-output.txt
+
+# --- Local proxy captures --------------------------------------------------
+# The proxy's capture mode records request SHAPES by default, but --capture-text
+# records prompt CONTENT - which for a coding assistant means source code.
+# Neither belongs in a repository, and the distinction is too easy to forget at
+# the moment it matters.
+*capture*.jsonl
+*.capture.json
+proxy.key
+
+# Backups this repository's own scripts create when editing a developer's
+# settings. Useful locally, never shareable.
+*.map-backup
 
 # --- OS / editor -----------------------------------------------------------
 .DS_Store

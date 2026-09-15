@@ -17,7 +17,7 @@
     Preventing that requires network controls (the private profile), and
     network controls are only as strong as the rules nobody has edited.
 
-    See docs/identity-modes.md for the full comparison.
+    See docs/architecture.md for the full comparison.
 -->
 <fragment>
     <!--

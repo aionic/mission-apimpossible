@@ -32,7 +32,7 @@ allowed_client_app_ids = []
 # profile's real purpose becomes keeping inference traffic off the public
 # internet, which is a data-exposure control and still worth having.
 #
-# See docs/identity-modes.md.
+# See docs/architecture.md.
 identity_mode = "brokered"
 
 # Must be EMPTY in brokered mode.
@@ -112,7 +112,7 @@ jumpbox_admin_principal_ids = []
 #   * "no secret in state" -> handled here via AzAPI write-only sensitive_body,
 #                             but that approach is UNPROVEN against Azure.
 #
-# Read docs/private-test-access.md before setting this. Alternatives are
+# Read docs/deployment.md before setting this. Alternatives are
 # enable_test_access = false, or a Linux jumpbox where Entra SSH is GA and
 # genuinely passwordless.
 # ---------------------------------------------------------------------------

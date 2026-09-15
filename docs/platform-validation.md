@@ -13,7 +13,7 @@ its evidence class. The classes are deliberately distinct:
 > **Nothing in this file is Empirical yet.** No Azure resource has been created
 > by this repository. Every row marked *Pending* requires a live run before the
 > corresponding acceptance criterion in
-> [`implementation-plan.md`](implementation-plan.md) may be marked satisfied.
+> the acceptance criteria may be marked satisfied.
 >
 > **UPDATE 2026-09-14:** the public pattern has now been deployed and verified.
 > See "Deployment findings" below and the per-gate updates. The private
@@ -25,7 +25,7 @@ its evidence class. The classes are deliberately distinct:
 > pattern gates (G7 partially, G8) that require the private deployment.
 
 Documentation was reviewed on **2026-09-14**. Re-verify volatile rows against the
-versions pinned in [`versions.md`](versions.md) before deployment.
+versions pinned in [`deployment.md`](deployment.md) before deployment.
 
 ---
 
@@ -351,7 +351,7 @@ churn the VM on every plan.
 **Current state.** `map-p07` implements the networking and the
 `enable_test_access` toggle, and prepares the VM module, but the repository
 must not claim complete private Windows testing until option 1 is proven or
-another option is approved. See [`docs/private-test-access.md`](private-test-access.md).
+another option is approved. See [`docs/deployment.md`](deployment.md).
 
 ---
 

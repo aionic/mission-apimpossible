@@ -4,7 +4,7 @@
     The only operation this gateway exposes.
 
     Inbound order is security-significant and matches the approved sequence in
-    docs/implementation-plan.md:
+    docs/api-contract.md:
 
       1. base               - runs the GLOBAL policy, which establishes
                               correlation first so that even a global-scope

@@ -80,7 +80,7 @@ if ($profile -eq 'private') {
         Write-Host ""
         Write-Host "  NOTE: gate G4 is unresolved. Native-client Entra RDP prompts for a" -ForegroundColor Yellow
         Write-Host "  password, and portal Entra RDP is in preview. See" -ForegroundColor Yellow
-        Write-Host "  docs/private-test-access.md." -ForegroundColor Yellow
+        Write-Host "  docs/deployment.md." -ForegroundColor Yellow
         Write-Host ""
     }
 } else {

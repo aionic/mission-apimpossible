@@ -180,4 +180,4 @@ Deploying both patterns doubles the shared-service cost.
 - [ ] Set Azure budgets and alerts
 - [ ] Apply Conditional Access to the Foundry audience
 - [ ] Decide gate G4 if using the jumpbox
-- [ ] Review [`cyber-review.md`](cyber-review.md) with your security team
+- [ ] Review [`security.md`](security.md) with your security team

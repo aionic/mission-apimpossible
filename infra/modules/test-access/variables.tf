@@ -64,7 +64,7 @@ variable "bastion_sku" {
 }
 
 variable "acknowledge_unresolved_g4" {
-  description = "Explicit acknowledgement that Windows jumpbox access cannot currently satisfy GA-only, passwordless, and no-secret-in-state simultaneously. Must be set deliberately; see docs/private-test-access.md. Never default this to true."
+  description = "Explicit acknowledgement that Windows jumpbox access cannot currently satisfy GA-only, passwordless, and no-secret-in-state simultaneously. Must be set deliberately; see docs/deployment.md. Never default this to true."
   type        = bool
   default     = false
 }

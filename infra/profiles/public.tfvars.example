@@ -46,7 +46,7 @@ allowed_client_app_ids = []
 # Foundry independently authorizes the same human. True end-to-end identity,
 # but the bypass is then only preventable by network controls.
 #
-# See docs/identity-modes.md - neither is universally correct.
+# See docs/architecture.md - neither is universally correct.
 identity_mode = "brokered"
 
 # ONLY used when identity_mode = "passthrough". Must be empty in brokered mode;

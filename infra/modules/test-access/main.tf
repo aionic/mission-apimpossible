@@ -46,7 +46,7 @@ resource "terraform_data" "g4_gate" {
 
         Portal Entra RDP is in public preview. Native-client Entra RDP prompts
         for a password. See docs/platform-validation.md (G4) and
-        docs/private-test-access.md for the three options.
+        docs/deployment.md for the three options.
 
         To proceed with the documented limitations, set:
             acknowledge_unresolved_g4 = true

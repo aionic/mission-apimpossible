@@ -39,7 +39,7 @@
     recommends passing EndUserId and SourceIP so that SOC analysts can
     investigate AI alerts involving a gateway.
 
-    See docs/identity-modes.md.
+    See docs/architecture.md.
 -->
 <fragment>
     <set-variable name="identity-mode" value="brokered" />

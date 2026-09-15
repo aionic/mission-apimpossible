@@ -333,3 +333,30 @@ Full detail in [`platform-validation.md`](platform-validation.md).
 ## Reporting
 
 See [`SECURITY.md`](../SECURITY.md).
+
+## Reviewer checklist
+
+A security reviewer can work through this in order. Each item is verifiable by
+running something, not by reading a claim.
+
+- [ ] No credential-substituting policy — run `scripts/validate-policies.ps1`
+- [ ] Zero body bytes on all four diagnostic legs
+- [ ] No managed identity holds a Cognitive Services role in `passthrough` mode;
+      in `brokered` mode, exactly one does and no human does
+- [ ] Local key authentication disabled on the Foundry account
+- [ ] Canary test shows no prompt or output in telemetry — **and** a non-zero
+      record count in the same window, so an empty result is a real absence
+      rather than a broken pipeline
+- [ ] Terraform state audited field by field — run `scripts/audit-state-secrets.ps1`
+- [ ] Repeated `terraform apply` does not reopen public access
+- [ ] Request-validation ceilings fail closed — run `scripts/verify-request-validation.ps1`
+- [ ] Hosted tools rejected regardless of configuration
+- [ ] Nothing publishable leaks — run `scripts/prepublication-check.ps1`
+- [ ] **Private pattern only:** direct backend access fails from inside the
+      network, with valid RBAC
+- [ ] Decide whether the App Insights connection-string classification is
+      acceptable for your environment
+- [ ] Decide on gate G4 before enabling the jumpbox
+
+Evidence for each: [threat model](threat-model.md) ·
+[platform validation](platform-validation.md)

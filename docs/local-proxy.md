@@ -259,6 +259,6 @@ endpoint and tenant, matching the deployment it was generated for.
 ## Related
 
 - `docs/architecture/mission-apimpossible-ide-proxy.mmd` — the architecture contract
-- `docs/identity-modes.md` — brokered versus passthrough, unchanged by this
+- `docs/architecture.md` — brokered versus passthrough, unchanged by this
 - `docs/threat-model.md` — T-LOOPBACK
 - `docs/platform-validation.md` — gate G7, the strict-surface proofs this preserves

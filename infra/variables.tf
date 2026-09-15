@@ -93,7 +93,7 @@ variable "identity_mode" {
     can reach the Foundry endpoint can bypass the gateway entirely, and
     preventing that then depends on network controls.
 
-    See docs/identity-modes.md. Neither is universally correct.
+    See docs/architecture.md. Neither is universally correct.
   EOT
 
   type    = string
@@ -298,7 +298,7 @@ variable "bastion_sku" {
 }
 
 variable "acknowledge_unresolved_g4" {
-  description = "Explicit acknowledgement that Windows jumpbox access cannot currently satisfy GA-only, passwordless, and no-secret-in-state simultaneously. Deployment of the jumpbox fails closed until this is set deliberately. See docs/private-test-access.md. Never default this to true."
+  description = "Explicit acknowledgement that Windows jumpbox access cannot currently satisfy GA-only, passwordless, and no-secret-in-state simultaneously. Deployment of the jumpbox fails closed until this is set deliberately. See docs/deployment.md. Never default this to true."
   type        = bool
   default     = false
 }
