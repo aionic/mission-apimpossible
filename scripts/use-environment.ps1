@@ -102,11 +102,20 @@ Write-Host "  uv run python examples/python/respond.py `"Review this for races.`
 Write-Host "  uv run python examples/python/respond.py --stream `"Count to five.`""
 Write-Host ""
 
-if ($profileDeployed -eq 'public') {
-    Write-Host "Note: this is the PUBLIC pattern. A direct call to" -ForegroundColor DarkGray
-    Write-Host "  ${foundry}openai/v1/responses" -ForegroundColor DarkGray
-    Write-Host "will SUCCEED and bypass every gateway control. That is the" -ForegroundColor DarkGray
-    Write-Host "documented residual risk the private pattern exists to remove." -ForegroundColor DarkGray
+# The direct-bypass warning depends entirely on identity_mode, and printing the
+# wrong one teaches the wrong lesson about the deployment in front of you.
+$identityMode = Get-Out 'MAP_IDENTITY_MODE'
+
+if ($profileDeployed -eq 'public' -and $identityMode -eq 'passthrough') {
+    Write-Host "Note: PUBLIC pattern in PASSTHROUGH mode. A direct call to" -ForegroundColor Yellow
+    Write-Host "  ${foundry}openai/v1/responses" -ForegroundColor Yellow
+    Write-Host "will SUCCEED for anyone holding inference RBAC, bypassing every" -ForegroundColor Yellow
+    Write-Host "gateway control. Use brokered mode, or the private pattern." -ForegroundColor Yellow
+    Write-Host ""
+} elseif ($profileDeployed -eq 'public') {
+    Write-Host "Note: PUBLIC pattern in BROKERED mode. Only the gateway's managed" -ForegroundColor DarkGray
+    Write-Host "identity holds inference RBAC, so a direct call to Foundry fails" -ForegroundColor DarkGray
+    Write-Host "even for you. The gateway is the only way in." -ForegroundColor DarkGray
     Write-Host ""
 }
 

@@ -180,8 +180,8 @@ it differently.
 | | |
 | --- | --- |
 | **Control** | Least-privileged built-in role at account scope |
-| **Implementation** | `Cognitive Services OpenAI User` on the account only. Never Owner, Contributor, or Cognitive Services Contributor. APIM and VM identities hold no Cognitive Services role. |
-| **Residual risk** | **MEDIUM.** The role is broader than Responses — it also covers completions, embeddings, images, assistants, and video. A narrower custom role is a documented hardening option, not a default. |
+| **Implementation** | `Cognitive Services OpenAI User` at account scope only. Never Owner, Contributor, or Cognitive Services Contributor. Who holds it depends on `identity_mode`: in `passthrough`, named human principals and **no** managed identity; in `brokered` (the default), the APIM managed identity and **no** human. A Terraform precondition enforces that exclusivity. The VM identity holds no Cognitive Services role in either mode. |
+| **Residual risk** | **MEDIUM.** The role is broader than Responses — it also covers completions, embeddings, images, assistants, and video. A narrower custom role is a documented hardening option, not a default. In `brokered` mode the gateway calls the model for whoever its policy admits, so **RBAC is no longer the control that decides who reaches the model** — the gateway's own authorization is (see T19). |
 | **Verification** | Enumerate assignments on the account; confirm no managed identity appears. |
 
 ---
@@ -265,10 +265,10 @@ from the machine it runs on.
 
 | | |
 | --- | --- |
-| **Control** | IPv4 loopback binding; per-session random secret; constant-time comparison; memory-only storage; process-lifetime scope |
-| **Implementation** | Binds `127.0.0.1` explicitly — never `0.0.0.0`, and never the name `localhost`, which can resolve to `::1` and produce a confusing mismatch. The secret is generated per start, never written to disk, never logged, and dies with the process. Only `POST /v1/responses` and `GET /v1/models` are served. |
+| **Control** | IPv4 loopback binding; random local key; constant-time comparison; restrictive file permissions on every file that holds it |
+| **Implementation** | Binds `127.0.0.1` explicitly — never `0.0.0.0`, and never the name `localhost`, which can resolve to `::1` and produce a confusing mismatch. Only `POST /v1/responses` and `GET /v1/models` are served. The key **is persisted**, at `%LOCALAPPDATA%\mission-apimpossible\proxy.key` and inside the IDE's model configuration, because a key that changed every start would have to be re-pasted every start — and a tool that demands that is one people disable. Every file holding it is created with owner-only permissions (`0600` on POSIX via `O_CREAT`, never write-then-chmod; inheritance stripped via `icacls` on Windows), and a failure to apply them raises rather than warns. It is never logged. |
 | **Residual risk** | **MEDIUM.** Any process running as this user can reach the listener while it is up. The secret raises the bar — an attacker must also read it from the IDE's storage or the proxy's output — but it does not eliminate the risk. Malware already executing as the developer can impersonate the IDE and spend that developer's quota under their identity. |
-| **Verification** | Confirm the listener is unreachable from another host on the network; confirm a wrong or absent secret is rejected; confirm the secret appears in no log, no file, and no telemetry; confirm the listener is gone once the process exits. |
+| **Verification** | Confirm the listener is unreachable from another host on the network; confirm a wrong or absent key is rejected; confirm the key appears in no log and no telemetry; confirm every file holding it is readable only by the owner (`icacls` / `stat -c %a`); confirm the listener is gone once the process exits. |
 
 **Why this is accepted.** The alternative is that the gateway cannot be used
 from an IDE at all. The exposure is bounded to a single machine, requires local
@@ -283,6 +283,43 @@ per-user token limits still key on them. This is a courier, not an identity
 substitution — see `docs/local-proxy.md` for why that distinction is load
 bearing and why this is an explicit, recorded exception to the "no
 authentication shim" rule rather than a reinterpretation of it.
+
+---
+
+## T19 — Authenticated but unauthorised caller
+
+**Anyone the identity provider will issue a token to can use the gateway.**
+
+Found by security review, and the most serious issue this design has had.
+
+Authentication establishes *who you are*. Authorisation establishes *whether
+you may*. An earlier version of this gateway did only the first, and in
+`brokered` mode that is a privilege escalation: the gateway calls the model
+with its own managed identity, so whoever the policy admits gets inference.
+
+The gap was subtle because the audience looked correct. `api_audience` was the
+Foundry resource — a Microsoft **first-party** resource. Entra issues tokens
+for those to any authenticated principal; issuance is not gated by RBAC on the
+model. So every member and B2B guest of the tenant could run `az login`, obtain
+a valid token, and get inference they held no permission for, billed to the
+subscription, under a fresh quota counter.
+
+The client-application allowlist did not help. It filters **applications**, and
+the entries it holds — Azure CLI, VS Code — are public first-party clients
+every tenant user already has. It also failed open when empty.
+
+| | |
+| --- | --- |
+| **Control** | Dedicated Entra application with user assignment required, plus a positive scope check in policy |
+| **Implementation** | `api_audience` is a dedicated app registration (`api://<app-id>`), not a first-party resource. Its enterprise application sets `appRoleAssignmentRequired = true`, so **Entra itself refuses a token** to anyone not explicitly assigned. The policy then requires `scp` to contain `required_scope`, matching whole space-delimited entries so a longer scope name cannot satisfy a shorter one. A Terraform precondition fails the apply if `identity_mode = "brokered"` and `required_scope` is empty. |
+| **Residual risk** | **LOW.** Two independent layers, one at the identity provider and one at the gateway. Assignment is now an explicit administrative act. Residual: whoever manages that assignment list controls access, so it belongs under the same review as any other entitlement. |
+| **Verification** | Request a token for the old Foundry audience and confirm the gateway returns `401`; request one for the gateway audience as an assigned user and confirm `200`; remove the assignment and confirm Entra refuses to issue at all. Proven live: old audience `401 invalid_token`, new audience `200`. |
+
+> **Why `passthrough` never had this problem.** There, the caller's own token
+> reaches Foundry, which performs its own RBAC check — the second, independent
+> authorisation decision that `brokered` mode removes. Brokered mode eliminates
+> the direct-backend bypass (T11) and must replace that lost check with one of
+> its own. It now does.
 
 ---
 
@@ -308,6 +345,7 @@ authentication shim" rule rather than a reinterpretation of it.
 | T16 Endpoint config | LOW | LOW |
 | T17 Public exposure | MEDIUM | MEDIUM |
 | **T18 Loopback listener** | **MEDIUM (only while the proxy runs)** | **MEDIUM (only while the proxy runs)** |
+| **T19 Unauthorised caller** | **LOW (was HIGH)** | **LOW (was HIGH)** |
 
 \* Until the canary verification is performed against a live deployment.
 

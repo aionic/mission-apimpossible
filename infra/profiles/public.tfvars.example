@@ -88,3 +88,7 @@ tags = {
   "cost-center" = ""
   "owner"       = ""
 }
+
+# Scope the caller's token must carry. REQUIRED in brokered mode - see
+# docs/security.md. Empty here would let any tenant member use the gateway.
+required_scope        = "Responses.Invoke"

@@ -302,3 +302,25 @@ variable "acknowledge_unresolved_g4" {
   type        = bool
   default     = false
 }
+
+variable "required_scope" {
+  description = <<-EOT
+    Scope value the caller's token must carry, e.g. "Responses.Invoke".
+
+    This is AUTHORISATION, and it is separate from authentication. Without it
+    the gateway only establishes that a caller is a delegated human in the
+    right tenant - which, when api_audience is a Microsoft first-party resource
+    such as the Foundry audience, is every member and B2B guest of that tenant.
+    In brokered mode the gateway then calls the model with its own managed
+    identity, so those callers obtain inference they hold no permission for.
+
+    Pair it with a dedicated Entra application that has "user assignment
+    required" enabled, so Entra refuses a token to anyone unassigned and this
+    check confirms the scope it issued. Two independent layers.
+
+    Empty disables the check, which is only safe when api_audience belongs to
+    a resource that performs its own entitlement check.
+  EOT
+  type        = string
+  default     = ""
+}

@@ -25,11 +25,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
 from pathlib import Path
 from typing import Any
 
 from map_proxy.config import ProxyConfig
+from map_proxy.tokens import write_private_file
 
 logger = logging.getLogger("map_proxy")
 
@@ -146,7 +146,10 @@ def write_vscode_config(config: ProxyConfig, key: str, path: Path | None = None)
 
         backup = target.with_suffix(target.suffix + ".map-backup")
         if not backup.exists():
-            shutil.copy2(target, backup)
+            # The backup inherits this file's contents, which after the first
+            # write include the session key - so it gets the same restrictive
+            # permissions rather than whatever copy2 would propagate.
+            write_private_file(backup, target.read_text(encoding="utf-8"))
 
     # Idempotent: replace our own entry rather than accumulating duplicates.
     merged = [
@@ -172,6 +175,10 @@ def write_vscode_config(config: ProxyConfig, key: str, path: Path | None = None)
                 )
                 entry["models"] = usable
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+    # This file contains the session key verbatim, in apiKey and in
+    # requestHeaders.Authorization. A plain write_text would create it under
+    # the process umask - 0644 on most POSIX systems - leaving it readable by
+    # every local account, which is precisely the attacker the key exists to
+    # stop. Same protection as the key file itself.
+    write_private_file(target, json.dumps(merged, indent=2) + "\n")
     return target

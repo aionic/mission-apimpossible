@@ -55,23 +55,62 @@ def default_key_path() -> Path:
 def _restrict_to_current_user(path: Path) -> None:
     """Removes access for everyone except the owner.
 
-    This is the whole point of the key file, so a failure to lock it down is
-    reported rather than ignored.
+    This is the entire reason the key file exists, so a failure to lock it down
+    RAISES rather than being logged and forgotten. An unreadable warning in a
+    scrollback buffer is not a security control.
 
-    On Windows a file inherits the directory ACL, which for LOCALAPPDATA is
-    already user-scoped - but inheritance is easy to break and worth asserting
-    explicitly. icacls is used rather than a pywin32 dependency.
+    On Windows the file inherits the directory ACL, which under LOCALAPPDATA is
+    already user-scoped - but inheritance is easy to break, so it is asserted
+    explicitly. icacls is used rather than adding a pywin32 dependency.
     """
     if os.name == "nt":
-        user = os.environ.get("USERNAME", "")
+        user = os.environ.get("USERNAME")
         if not user:
-            return
-        subprocess.run(  # noqa: S603
+            raise OSError(
+                "USERNAME is not set, so file permissions cannot be restricted. "
+                f"Refusing to leave {path} readable by other local accounts."
+            )
+        result = subprocess.run(  # noqa: S603
             ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:(R,W)"],  # noqa: S607
             check=False,
             capture_output=True,
+            text=True,
         )
+        if result.returncode != 0:
+            raise OSError(
+                f"Could not restrict permissions on {path}: "
+                f"{(result.stderr or result.stdout or '').strip()}"
+            )
     else:
+        path.chmod(0o600)
+
+
+def write_private_file(path: Path, content: str) -> None:
+    """Writes a file that only the current user can read.
+
+    Creates it with restrictive permissions rather than writing first and
+    tightening afterwards. The naive order leaves a window - brief, but real,
+    and on a shared machine a window is all an attacker needs - where the file
+    exists world-readable under the default umask.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if os.name == "nt":
+        # Windows has no umask equivalent; create then assert the ACL, which
+        # raises on failure.
+        path.write_text(content, encoding="utf-8")
+        _restrict_to_current_user(path)
+        return
+
+    # POSIX: O_CREAT with mode 0o600 so the file is never briefly readable.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+    finally:
+        # Re-assert, in case the file already existed with looser permissions:
+        # O_CREAT does not change the mode of an existing file.
         path.chmod(0o600)
 
 
@@ -79,26 +118,30 @@ def load_or_create_key(path: Path | None = None, *, rotate: bool = False) -> str
     """Returns the persistent local key, creating it on first use.
 
     Persistent rather than per-session deliberately. A key that changed on
-    every start would have to be re-pasted into the IDE every start, and a
-    tool that demands a fresh secret each morning is a tool people stop using -
-    or worse, one they work around by disabling authentication entirely.
+    every start would have to be re-pasted into the IDE every start, and a tool
+    that demands a fresh secret each morning is a tool people stop using - or
+    worse, one they work around by disabling authentication entirely.
 
     The key is not an Azure credential and grants nothing off this machine. It
     exists because loopback is NOT private: on Windows any local user account
     can reach 127.0.0.1, so without it a second user on a shared machine could
     obtain inference as the signed-in developer.
+
+    Because that is the threat, permissions are re-asserted on every call,
+    including when an existing key is reused - the file may have been created
+    by an older version, restored from a backup, or copied.
     """
     key_path = path or default_key_path()
 
     if key_path.exists() and not rotate:
         existing = key_path.read_text(encoding="utf-8").strip()
         if existing:
+            # Do not trust permissions set by a previous run.
+            _restrict_to_current_user(key_path)
             return existing
 
     secret = generate_session_secret()
-    key_path.parent.mkdir(parents=True, exist_ok=True)
-    key_path.write_text(secret, encoding="utf-8")
-    _restrict_to_current_user(key_path)
+    write_private_file(key_path, secret)
     logger.info("Wrote a new local proxy key to %s", key_path)
     return secret
 

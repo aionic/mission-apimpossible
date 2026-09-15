@@ -77,3 +77,8 @@ output "BASTION_NAME" {
   description = "Bastion host name. Empty when test access is disabled."
   value       = local.test_access_enabled ? module.test_access[0].bastion_name : ""
 }
+
+output "MAP_IDENTITY_MODE" {
+  description = "How the gateway authenticates to Foundry. Determines whether a direct-backend bypass is possible, so tooling reads it rather than assuming."
+  value       = var.identity_mode
+}

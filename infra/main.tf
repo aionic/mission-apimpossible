@@ -127,6 +127,7 @@ module "gateway" {
 
   identity_mode       = var.identity_mode
   backend_mi_resource = var.backend_mi_resource
+  required_scope      = var.required_scope
 
   foundry_backend_url   = module.foundry.responses_backend_url
   model_deployment_name = module.foundry.model_deployment_name
@@ -174,4 +175,35 @@ module "test_access" {
   acknowledge_unresolved_g4 = var.acknowledge_unresolved_g4
 
   tags = local.base_tags
+}
+
+# ---------------------------------------------------------------------------
+# Authorisation guard.
+#
+# In brokered mode the gateway calls the model with its OWN managed identity,
+# so whoever the policy admits gets inference. If the audience is a Microsoft
+# first-party resource - the Foundry audience, say - Entra issues tokens for it
+# to every member and guest of the tenant, and without a scope check that is
+# precisely who can use the gateway.
+#
+# Passthrough mode does not need this: the caller's own token reaches Foundry,
+# which performs its own RBAC check.
+# ---------------------------------------------------------------------------
+resource "terraform_data" "authorization_guard" {
+  input = "${var.identity_mode}:${var.required_scope}"
+
+  lifecycle {
+    precondition {
+      condition = var.identity_mode != "brokered" || trimspace(var.required_scope) != ""
+      error_message = join("", [
+        "identity_mode is 'brokered' but required_scope is empty. ",
+        "In brokered mode the gateway calls the model with its managed identity, ",
+        "so anyone the policy admits gets inference. With a first-party audience ",
+        "that is the entire tenant. Register a dedicated Entra application with ",
+        "'user assignment required', expose a scope, and set both api_audience ",
+        "and required_scope - or use identity_mode = \"passthrough\", where Foundry ",
+        "performs its own authorization check."
+      ])
+    }
+  }
 }

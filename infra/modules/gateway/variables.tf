@@ -154,3 +154,9 @@ variable "backend_mi_resource" {
   type        = string
   default     = "https://ai.azure.com"
 }
+
+variable "required_scope" {
+  description = "Scope value the caller's token must carry. Empty disables the check. See the root module for why this matters."
+  type        = string
+  default     = ""
+}

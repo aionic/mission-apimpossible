@@ -60,7 +60,7 @@ class ClientConfig:
         endpoint = os.environ.get("MAP_ENDPOINT", "").strip()
         model = os.environ.get("MAP_MODEL", "").strip()
         tenant_id = os.environ.get("MAP_TENANT_ID", "").strip()
-        scope = os.environ.get("MAP_SCOPE", "https://ai.azure.com/.default").strip()
+        scope = os.environ.get("MAP_SCOPE", "").strip()
 
         missing = [
             name

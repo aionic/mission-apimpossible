@@ -12,6 +12,7 @@ import pytest
 from map_client.config import ClientConfig, ConfigError
 from map_client.correlation import RequestContext
 
+VALID_SCOPE = "api://00000000-1111-2222-3333-444444444444/.default"
 VALID_TENANT = "11111111-2222-3333-4444-555555555555"
 VALID_ENDPOINT = "https://apim-map-test.azure-api.net/openai/v1/responses"
 
@@ -35,6 +36,11 @@ def set_valid_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MAP_ENDPOINT", VALID_ENDPOINT)
     monkeypatch.setenv("MAP_MODEL", "coding-model")
     monkeypatch.setenv("MAP_TENANT_ID", VALID_TENANT)
+    # MAP_SCOPE is required rather than defaulted. A default pointing at the
+    # wrong audience produces a 401 the caller cannot explain, and the audience
+    # is now deployment-specific: scripts/use-environment.ps1 derives it from
+    # the deployed gateway.
+    monkeypatch.setenv("MAP_SCOPE", VALID_SCOPE)
 
 
 # --- Configuration ---------------------------------------------------------
@@ -47,7 +53,7 @@ def test_valid_config_resolves(clean_env: None, monkeypatch: pytest.MonkeyPatch)
     assert config.endpoint == VALID_ENDPOINT
     assert config.model == "coding-model"
     assert config.tenant_id == VALID_TENANT
-    assert config.scope == "https://ai.azure.com/.default"
+    assert config.scope == VALID_SCOPE
 
 
 def test_base_url_strips_responses_suffix(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:

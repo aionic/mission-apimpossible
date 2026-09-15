@@ -21,6 +21,7 @@ locals {
     "map-max-request-bytes"       = tostring(var.max_request_bytes)
     "map-backend-timeout-seconds" = tostring(var.backend_timeout_seconds)
     "map-backend-mi-resource"     = var.backend_mi_resource
+    "map-required-scope"          = var.required_scope
   }
 
   # The backend-auth fragment is uploaded under one stable id, but its CONTENT

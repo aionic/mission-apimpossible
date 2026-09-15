@@ -94,12 +94,16 @@ class ProxyConfig:
         endpoint = (gateway_endpoint or os.environ.get("MAP_ENDPOINT", "")).strip()
         tenant = (tenant_id or os.environ.get("MAP_TENANT_ID", "")).strip()
         scope_value = (
-            scope or os.environ.get("MAP_SCOPE", "https://ai.azure.com/.default")
+            scope or os.environ.get("MAP_SCOPE", "")
         ).strip()
 
         missing = [
             name
-            for name, value in (("MAP_ENDPOINT", endpoint), ("MAP_TENANT_ID", tenant))
+            for name, value in (
+                ("MAP_ENDPOINT", endpoint),
+                ("MAP_TENANT_ID", tenant),
+                ("MAP_SCOPE", scope_value),
+            )
             if not value
         ]
         if missing:
