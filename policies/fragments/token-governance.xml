@@ -19,10 +19,21 @@
 -->
 <fragment>
     <!--
-        Coarse concurrency guard. Honest limitation: this counts requests as
-        the gateway sees them. The interaction between counter lifetime and a
-        long-lived SSE stream must be measured (gate G5) before anyone
-        describes it as full-stream enforcement.
+        Coarse concurrency guard, and - as measured - the ONLY policy here that
+        constrains a burst at all. See docs/platform-validation.md, gate G5.
+
+        Measured with 10 requests dispatched inside 57ms: 5 were rejected here
+        with Retry-After 1-2s, and llm-token-limit below rejected none of them.
+
+        Two honest limitations:
+
+        * It overshoots. calls="2" admitted FIVE simultaneous requests, because
+          the counter is per gateway NODE. The real ceiling is calls x node
+          count, and node count is not something this sample pins or controls.
+
+        * It counts requests as the gateway sees them. The interaction between
+          counter lifetime and a long-lived SSE stream is still unmeasured, so
+          nobody should describe this as full-stream enforcement.
     -->
     <rate-limit-by-key
         calls="{{map-max-concurrent-per-user}}"
@@ -38,6 +49,22 @@
         estimate-prompt-tokens is false so non-streaming requests are limited
         against real reported usage. Streaming prompts are estimated anyway;
         the policy cannot avoid that.
+
+        MEASURED CONSEQUENCE of that choice: with estimation off, this policy
+        has no token count until the response returns, so it cannot pre-charge
+        and therefore CANNOT reject a concurrent request. In a 10-way burst
+        every caller cleared this check against a counter nothing had yet
+        incremented, and each saw remaining ~18,400 - its own usage only, blind
+        to the other nine. About 16,000 tokens passed a 20,000 ceiling.
+
+        So this is an AFTER-THE-FACT ceiling. It restrains a sustained caller
+        over time. It does not bound an instantaneous burst, and it is not a
+        billing control.
+
+        estimate-prompt-tokens="true" would let it pre-charge and close part of
+        that gap, by charging estimated rather than actual prompt tokens. That
+        trade is deliberately not taken: this sample prefers accounting that
+        matches reported usage, and states the burst gap openly instead.
     -->
     <llm-token-limit
         counter-key="@((string)context.Variables[&quot;quota-key&quot;])"

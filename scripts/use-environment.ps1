@@ -6,13 +6,20 @@
     Reads Terraform outputs and sets the MAP_* variables the Python client and
     curl examples expect. Dot-source it so the variables persist:
 
-        . .\scripts\use-environment.ps1
+        . .\scripts\use-environment.ps1 -ProfileName private
 
     Sets no secrets, because there are none. Authentication is your own Entra
     identity via `az login`.
+
+    Each profile owns a separate Terraform workspace, so that deploying or
+    destroying one cannot touch the other. `terraform output` only ever reports
+    the CURRENTLY selected workspace, so this script selects the right one
+    first - reading outputs without doing that silently returns the other
+    environment's endpoint, which is a confusing way to test the wrong gateway.
 #>
 [CmdletBinding()]
 param(
+    [ValidateSet('public', 'private')]
     [string]$ProfileName = 'public'
 )
 
@@ -24,10 +31,22 @@ if (-not (Test-Path (Join-Path $infra '.terraform'))) {
     throw "Terraform is not initialized. Run: terraform -chdir=infra init"
 }
 
+# public lives in the implicit 'default' workspace; private in its own.
+$workspace = if ($ProfileName -eq 'public') { 'default' } else { $ProfileName }
+$current = (& terraform "-chdir=$infra" workspace show 2>$null)
+
+if ($current -and $current.Trim() -ne $workspace) {
+    Write-Host "Switching Terraform workspace $current -> $workspace" -ForegroundColor Cyan
+    & terraform "-chdir=$infra" workspace select $workspace 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not select workspace '$workspace'. Has the $ProfileName profile been deployed?"
+    }
+}
+
 Write-Host "Reading Terraform outputs..." -ForegroundColor Cyan
 $raw = & terraform "-chdir=$infra" output -json 2>$null
 if ($LASTEXITCODE -ne 0 -or -not $raw) {
-    throw "No Terraform outputs found. Has the $ProfileName profile been deployed?"
+    throw "No Terraform outputs found in workspace '$workspace'. Has the $ProfileName profile been deployed?"
 }
 
 $out = $raw | ConvertFrom-Json

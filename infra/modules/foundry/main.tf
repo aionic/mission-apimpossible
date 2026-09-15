@@ -138,12 +138,30 @@ resource "azurerm_role_assignment" "inference_users" {
 }
 
 # brokered: the gateway, and only the gateway.
+#
+# count depends ONLY on identity_mode, which is known at plan time.
+#
+# An earlier version also tested `broker_principal_id != null` here. That works
+# when the gateway already exists, and fails on a FRESH deployment with
+# "Invalid count argument" - the principal ID is not known until APIM is
+# created. The public deployment masked this because it was converted in
+# place; a clean apply of the private profile exposed it.
+#
+# The null check therefore moves to a precondition, which Terraform is happy
+# to defer to apply time.
 resource "azurerm_role_assignment" "inference_broker" {
-  count = var.identity_mode == "brokered" && var.broker_principal_id != null ? 1 : 0
+  count = var.identity_mode == "brokered" ? 1 : 0
 
   scope                = azurerm_cognitive_account.openai.id
   role_definition_name = "Cognitive Services OpenAI User"
   principal_id         = var.broker_principal_id
+
+  lifecycle {
+    precondition {
+      condition     = var.broker_principal_id != null
+      error_message = "identity_mode is 'brokered' but broker_principal_id is null. The gateway's managed identity must hold inference RBAC, or nothing will be able to call the model."
+    }
+  }
 
   depends_on = [terraform_data.rbac_mode_guard]
 }

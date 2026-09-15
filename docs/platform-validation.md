@@ -295,9 +295,70 @@ Responses API"*, describe streaming behavior, and place **both policies in
 | --- | --- |
 | Responses and streaming support, inbound placement | Documented |
 | 429 vs 403 split and UTC-day window | Documented |
-| Policy accepted on Standard v2 with our attribute set | **Pending** |
+| Policy accepted on Standard v2 with our attribute set | **Empirical — accepted, enforcing** |
+| Which policy actually constrains concurrency | **Empirical — see below** |
+| Accounting headers present on every success | **Empirical — 34/34 responses** |
+| `Retry-After` present on every rejection | **Empirical — 5/5 rejections** |
 | Daily-quota 403 reliably distinguishable from RBAC 403 | **Pending — gates the approved 429 normalization** |
-| Per-user counter isolation across refreshed tokens | **Pending** |
+| Per-user counter isolation across refreshed tokens | **Pending — needs a second test identity** |
+
+### Empirical: only `rate-limit-by-key` constrains concurrency
+
+Reproduce with `scripts/verify-token-governance.ps1`.
+
+Two limits apply to the same caller and both surface as HTTP 429, so a test
+that merely counts 429s cannot tell you which one fired. They are
+distinguishable at runtime: `llm-token-limit` sets
+`x-ratelimit-remaining-tokens` on its rejections, `rate-limit-by-key` does not.
+
+**Sequential load never throttles, and that is correct.** 24 consecutive
+requests, ~1,200 tokens each, against a 20,000 TPM ceiling: `remaining`
+oscillated between 17,430 and 18,939 and never trended downward. At ~15s per
+request only about four fit inside the sliding minute, so tokens age out of the
+window as fast as they are consumed. A per-minute ceiling is not reachable by a
+single sequential caller issuing slow requests.
+
+**Concurrency has to be real to prove anything.** A first attempt used
+PowerShell `Start-Job`. Runspace startup costs a few hundred milliseconds each,
+so ten "concurrent" requests actually arrived spread over several seconds — slow
+enough to slip under a per-second limit. Ten 200s, no throttling, and a
+completely misleading pass. Switching to async `HttpClient.SendAsync` dispatched
+all ten within **57 ms**:
+
+| Result | Count | Retry-After | Token headers |
+| --- | --- | --- | --- |
+| 200 OK | 5 | — | present |
+| 429 from `rate-limit-by-key` | 5 | 1–2s | **absent** |
+| 429 from `llm-token-limit` | 0 | — | — |
+
+**`llm-token-limit` cannot reject a concurrent request.** With
+`estimate-prompt-tokens="false"` it has no token count until the response comes
+back, so it cannot pre-charge. In a 10-way burst every request cleared the
+inbound check against a counter nothing had yet incremented, and each reported
+`remaining ≈ 18,400` — its own consumption only, blind to the other nine.
+Roughly 16,000 tokens went through a 20,000 ceiling while every caller believed
+1,600 had been used.
+
+**The documented "counters are per gateway" overshoot is measurable.**
+`calls="2"` with `renewal-period="1"` let **five** simultaneous requests through,
+not two. The counter is per gateway node, so the effective concurrency ceiling is
+`calls × node count` — and node count is not a value the sample controls or can
+pin.
+
+**Consequences, which the docs and threat model must state plainly:**
+
+- The concurrency guard is `rate-limit-by-key`. It is coarse, it overshoots by
+  the gateway's node count, and it is the *only* thing standing between one
+  identity and a burst.
+- `llm-token-limit` is an **after-the-fact** ceiling. It restrains a sustained
+  caller over time; it does not bound an instantaneous burst.
+- Neither is a billing control. A burst can exceed the TPM ceiling before the
+  policy is aware any of it happened. Azure Cost Management remains the
+  financial source of truth.
+- Setting `estimate-prompt-tokens="true"` would let the policy pre-charge and
+  close part of this gap, at the cost of charging estimated rather than actual
+  prompt tokens. That trade is not taken here, and the reason is recorded in
+  `policies/fragments/token-governance.xml`.
 
 ---
 
@@ -489,7 +550,7 @@ records a verified tuple.
 | G2 claim set | Client allowlist values | Yes — variable, no default |
 | G3 VS Code flow | Extension acceptance | Yes — code written, untested against Entra |
 | **G4 Windows access** | **`map-p07` completion** | Yes — module exists, gated by a variable that fails closed |
-| G5 llm policies | Quota acceptance, 429 normalization | Yes — policy written, untested |
+| G5 llm policies | 429 normalization only | Enforcement **proven**; concurrency limits measured and documented |
 | G6 correlation | Observability acceptance | Yes |
 | G7 ceilings | Final size cap | Yes — conservative cap chosen |
 | G8 bypass | Private-pattern acceptance | Yes — rules written, unproven |
