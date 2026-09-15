@@ -19,17 +19,17 @@
     "commands": [
       {
         "command": "missionApimpossible.ask",
-        "title": "Mission APIMpossible: Ask about the current selection",
+        "title": "Ask about the current selection",
         "category": "Mission APIMpossible"
       },
       {
         "command": "missionApimpossible.prompt",
-        "title": "Mission APIMpossible: Send a prompt",
+        "title": "Send a prompt",
         "category": "Mission APIMpossible"
       },
       {
-        "command": "missionApimpossible.signOut",
-        "title": "Mission APIMpossible: Show sign-in status",
+        "command": "missionApimpossible.showSignInStatus",
+        "title": "Show sign-in status",
         "category": "Mission APIMpossible"
       }
     ],

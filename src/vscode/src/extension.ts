@@ -259,7 +259,7 @@ export function activate(extensionContext: vscode.ExtensionContext): void {
   );
 
   extensionContext.subscriptions.push(
-    vscode.commands.registerCommand('missionApimpossible.signOut', async () => {
+    vscode.commands.registerCommand('missionApimpossible.showSignInStatus', async () => {
       try {
         const config = readConfig();
         const account = await describeSession(config.scope, config.tenantId);
