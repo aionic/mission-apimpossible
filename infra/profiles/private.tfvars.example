@@ -49,10 +49,10 @@ model_capacity        = 0
 apim_sku             = "StandardV2_1"
 apim_publisher_email = ""
 
-tokens_per_minute                = 20000
-daily_token_quota                = 100000
-max_concurrent_requests_per_user = 2
-max_request_bytes                = 65536
+tokens_per_minute                = 200000
+daily_token_quota                = 5000000
+max_concurrent_requests_per_user = 4
+max_request_bytes                = 1048576
 backend_timeout_seconds          = 120
 normalize_quota_status_to_429    = false
 

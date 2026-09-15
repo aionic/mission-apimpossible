@@ -15,36 +15,79 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
     },
     "input": {
-      "description": "Either a single text prompt or a bounded, text-only message history maintained by the client. No opaque input items, no file or image parts, no URL-bearing structures.",
+      "description": "Either a single text prompt or a bounded, text-only message history maintained by the client. Text only: no file, image or audio parts, and no URL-bearing structures.",
       "oneOf": [
         {
           "type": "string",
           "minLength": 1,
-          "maxLength": 49152
+          "maxLength": 786432
         },
         {
           "type": "array",
           "minItems": 1,
-          "maxItems": 40,
+          "maxItems": 400,
           "comment": "Inlined deliberately. A '#/definitions/...' $ref is resolved relative to the DOCUMENT root, and APIM stores this schema nested under components.schemas, so the pointer would not resolve at runtime and the array form would silently fail open.",
           "items": {
-            "comment": "Three item shapes, and the split matters. A plain text turn is the original contract. The two function_call shapes exist ONLY so a CLIENT-SIDE tool loop can replay its own prior turns: the model asks, the CLIENT executes on its own machine, the client sends the result back as text. The service never executes anything. Hosted tools - code interpreter, file search, MCP, computer use, web search - would move execution server-side and are rejected unconditionally.",
+            "comment": "Three item shapes. A text turn is the original contract - and it accepts BOTH a plain string and the canonical array of typed parts, because a real IDE sends the latter: GitHub Copilot was measured sending content as [{type:input_text,text:...}] with an item-level type of 'message'. The two function_call shapes exist ONLY so a CLIENT-SIDE tool loop can replay its own prior turns: the model asks, the CLIENT executes on its own machine, and the client sends the result back. The service never executes anything.",
             "type": "object",
             "oneOf": [
               {
-                "comment": "A text turn.",
+                "comment": "A text turn, in either the plain or canonical form.",
                 "type": "object",
                 "additionalProperties": false,
                 "required": ["role", "content"],
                 "properties": {
+                  "type": {
+                    "comment": "Present on canonical items. Only 'message' is accepted here; the function_call shapes are separate branches.",
+                    "type": "string",
+                    "const": "message"
+                  },
+                  "id": {
+                    "comment": "Opaque item identifier echoed by some clients. Bounded, never interpreted.",
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": ["in_progress", "completed", "incomplete"]
+                  },
                   "role": {
                     "type": "string",
                     "enum": ["system", "developer", "user", "assistant"]
                   },
                   "content": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 49152
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 786432
+                      },
+                      {
+                        "comment": "The canonical form. Text parts ONLY - input_image, input_file and input_audio are absent by design, so an attachment is rejected rather than silently dropped.",
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 64,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["type", "text"],
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": ["input_text", "output_text", "text"]
+                            },
+                            "text": {
+                              "type": "string",
+                              "maxLength": 786432
+                            },
+                            "annotations": {
+                              "type": "array",
+                              "maxItems": 64
+                            }
+                          }
+                        }
+                      }
+                    ]
                   }
                 }
               },
@@ -55,6 +98,11 @@
                 "required": ["type", "call_id", "name", "arguments"],
                 "properties": {
                   "type": { "type": "string", "const": "function_call" },
+                  "id": { "type": "string", "maxLength": 128 },
+                  "status": {
+                    "type": "string",
+                    "enum": ["in_progress", "completed", "incomplete"]
+                  },
                   "call_id": {
                     "type": "string",
                     "minLength": 1,
@@ -70,7 +118,7 @@
                   "arguments": {
                     "comment": "A JSON string produced by the model. Bounded, and never parsed or executed by the gateway.",
                     "type": "string",
-                    "maxLength": 16384
+                    "maxLength": 65536
                   }
                 }
               },
@@ -81,13 +129,18 @@
                 "required": ["type", "call_id", "output"],
                 "properties": {
                   "type": { "type": "string", "const": "function_call_output" },
+                  "id": { "type": "string", "maxLength": 128 },
+                  "status": {
+                    "type": "string",
+                    "enum": ["in_progress", "completed", "incomplete"]
+                  },
                   "call_id": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 128,
                     "pattern": "^[A-Za-z0-9._:-]{1,128}$"
                   },
-                  "output": { "type": "string", "maxLength": 49152 }
+                  "output": { "type": "string", "maxLength": 786432 }
                 }
               }
             ]
@@ -182,6 +235,11 @@
           }
         }
       ]
+    },
+    "truncation": {
+      "description": "How the service should handle a context window overflow. 'auto' lets it drop middle-of-conversation items; 'disabled' fails instead. Bounded to those two values. This governs transient request handling, not persistence: it does not store anything, and store=false still applies. GitHub Copilot sends this on every agent-mode request.",
+      "type": "string",
+      "enum": ["auto", "disabled"]
     },
     "parallel_tool_calls": {
       "description": "Whether the model may request several client-side tools at once. Execution still happens on the caller's machine either way.",

@@ -200,9 +200,24 @@ variable "max_concurrent_requests_per_user" {
 }
 
 variable "max_request_bytes" {
-  description = "Maximum HTTP request body size. Default 64 KiB sits below every documented APIM ceiling (gate G7)."
+  description = <<-EOT
+    Maximum HTTP request body size.
+
+    Was 64 KiB, chosen conservatively because the documented ceilings conflict
+    (gate G7): the validate-content reference permits up to 4 MB, the gateway
+    runtime limits table lists 100 KiB for bodies it processes, and v2 has a
+    separate 2 MiB buffered-payload limit.
+
+    Measured reality made that unusable. A single GitHub Copilot agent-mode
+    turn sent 133 KB of input alone, plus 88 function-tool definitions on top.
+    An IDE carries accumulated conversation context and its whole tool
+    catalogue on every request; 64 KiB is a single-prompt-sized budget.
+
+    The ceiling this can safely take is an EMPIRICAL question, not a
+    documentation question, and is probed by scripts/probe-size-ceiling.ps1.
+  EOT
   type        = number
-  default     = 65536
+  default     = 1048576
 }
 
 variable "backend_timeout_seconds" {

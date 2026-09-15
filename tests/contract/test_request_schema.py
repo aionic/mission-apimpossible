@@ -115,7 +115,6 @@ def test_store_may_be_omitted(validator: Draft7Validator) -> None:
         ("prompt", {"id": "pmpt_1"}, "server-side stored artifact"),
         ("multi_agent", {"enabled": True}, "server-side subagent execution"),
         ("context_management", {"compact_threshold": 100}, "server-side compaction"),
-        ("truncation", "auto", "not reviewed"),
         ("include", ["reasoning.encrypted_content"], "not reviewed"),
         ("service_tier", "flex", "not reviewed"),
     ],
@@ -185,11 +184,14 @@ def test_empty_input_is_rejected(validator: Draft7Validator) -> None:
 
 
 def test_oversized_input_is_rejected(validator: Draft7Validator) -> None:
-    assert not is_valid(validator, valid_request(input="x" * 49153))
+    # The bound is large because a real IDE needs it to be - GitHub Copilot
+    # was measured sending 133 KB of input in a single agent-mode turn - but
+    # it is still a bound, and it is still enforced.
+    assert not is_valid(validator, valid_request(input="x" * 786433))
 
 
 def test_too_many_messages_is_rejected(validator: Draft7Validator) -> None:
-    body = valid_request(input=[{"role": "user", "content": "hi"} for _ in range(41)])
+    body = valid_request(input=[{"role": "user", "content": "hi"} for _ in range(401)])
     assert not is_valid(validator, body)
 
 
@@ -346,3 +348,114 @@ def test_a_function_call_item_cannot_carry_extra_properties(
         }
     ]
     assert not is_valid(validator, body)
+
+
+# ---------------------------------------------------------------------------
+# The shape a real IDE actually sends.
+#
+# These are written from a CAPTURED GitHub Copilot agent-mode request, not from
+# the specification. The gateway had been rejecting every one of them:
+#
+#   content_forms      ["array"]           - canonical typed parts, not strings
+#   content_part_types ["input_text"]
+#   input_item_types   ["message"]         - items carry an explicit type
+#   input_bytes        136211              - 133 KB in ONE turn
+#   tool_count         88                  - the whole tool catalogue, per request
+#   outside allowlist  ["truncation"]
+#
+# Guessing produced a schema that looked reasonable and worked with nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_content_parts_are_accepted(validator: Draft7Validator) -> None:
+    body = valid_request()
+    body["input"] = [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Review this function."}],
+        }
+    ]
+    assert is_valid(validator, body)
+
+
+def test_plain_string_content_is_still_accepted(validator: Draft7Validator) -> None:
+    # The simple form must keep working - the curl and Python examples use it,
+    # and breaking them to satisfy an IDE would be a poor trade.
+    body = valid_request()
+    body["input"] = [{"role": "user", "content": "Review this function."}]
+    assert is_valid(validator, body)
+
+
+def test_assistant_output_text_parts_are_accepted(validator: Draft7Validator) -> None:
+    body = valid_request()
+    body["input"] = [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Looks fine."}],
+        }
+    ]
+    assert is_valid(validator, body)
+
+
+def test_item_level_id_and_status_are_tolerated(validator: Draft7Validator) -> None:
+    # Echoed back by clients replaying history. Bounded, never interpreted.
+    body = valid_request()
+    body["input"] = [
+        {
+            "type": "message",
+            "id": "msg_abc123",
+            "status": "completed",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hi"}],
+        }
+    ]
+    assert is_valid(validator, body)
+
+
+@pytest.mark.parametrize("part_type", ["input_image", "input_file", "input_audio"])
+def test_non_text_content_parts_are_rejected(
+    validator: Draft7Validator, part_type: str
+) -> None:
+    # The text-only boundary is unchanged by widening the shape. An attachment
+    # must be REJECTED rather than silently dropped, so the caller knows the
+    # model never saw it.
+    body = valid_request()
+    body["input"] = [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": part_type, "text": "x"}],
+        }
+    ]
+    assert not is_valid(validator, body)
+
+
+def test_an_unknown_item_type_is_rejected(validator: Draft7Validator) -> None:
+    body = valid_request()
+    body["input"] = [{"type": "reasoning", "role": "assistant", "content": "x"}]
+    assert not is_valid(validator, body)
+
+
+def test_truncation_is_bounded_to_known_values(validator: Draft7Validator) -> None:
+    assert is_valid(validator, valid_request(truncation="auto"))
+    assert is_valid(validator, valid_request(truncation="disabled"))
+    assert not is_valid(validator, valid_request(truncation="middle_out"))
+
+
+def test_a_realistic_agent_tool_catalogue_is_accepted(
+    validator: Draft7Validator,
+) -> None:
+    # 88 tools were measured on a single request; the bound must clear that
+    # with room, or agent mode fails the moment somebody installs an extension.
+    tools = [
+        {
+            "type": "function",
+            "name": f"tool_{i}",
+            "description": "x" * 200,
+            "parameters": {"type": "object", "properties": {"a": {"type": "string"}}},
+        }
+        for i in range(88)
+    ]
+    assert is_valid(validator, valid_request(tools=tools))
