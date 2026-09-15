@@ -186,8 +186,21 @@ cd src\vscode
 npm ci
 npm run compile
 npx @vscode/vsce package --no-dependencies
+
+# Stable VS Code:
 code --install-extension mission-apimpossible-1.0.0.vsix
+
+# VS Code Insiders is a SEPARATE installation:
+code-insiders --install-extension mission-apimpossible-1.0.0.vsix
 ```
+
+> **If you run Insiders, use `code-insiders` for both steps.** Stable and
+> Insiders keep separate extension directories *and* separate `settings.json`
+> files. Installing with `code` while running Insiders looks like it worked —
+> the CLI prints "successfully installed" — and the commands simply never
+> appear in the palette, with no error anywhere to explain why. The settings
+> below must also be set in the Insiders `settings.json`
+> (`%APPDATA%\Code - Insiders\User\settings.json`), not the stable one.
 
 Select code → **Mission APIMpossible: Ask about the current selection**.
 
@@ -206,6 +219,8 @@ custom subdomain and block redeploying under the same name.
 | --- | --- |
 | `401` | Token audience mismatch — re-run step 2 |
 | `403 not_delegated_identity` | Using a service principal; sign in as a user |
+| Commands missing from the palette | Installed with `code` while running Insiders. Reinstall with `code-insiders`. |
+| `endpoint is not configured` in Insiders | Settings were set in the stable `settings.json`. Insiders uses its own. |
 | `403 unapproved_client` | Client app not in `allowed_client_app_ids` |
 | `403` from backend | Missing `Cognitive Services OpenAI User` on the account |
 | `400 unapproved_model` | `MAP_MODEL` ≠ `model_deployment_name` |
