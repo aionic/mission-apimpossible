@@ -71,3 +71,8 @@ markers = [
     # identity. They are opt-in and never run in PR CI.
     "live: requires a deployed environment and interactive Entra sign-in",
 ]
+
+[dependency-groups]
+dev = [
+    "types-jsonschema>=4.26.0.20260518",
+]

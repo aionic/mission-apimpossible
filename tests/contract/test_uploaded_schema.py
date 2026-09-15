@@ -34,7 +34,8 @@ EXPECTED_POINTER = f"#/components/schemas/{SCHEMA_ID}"
 
 @pytest.fixture(scope="module")
 def raw_schema() -> dict[str, Any]:
-    return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    loaded: dict[str, Any] = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    return loaded
 
 
 @pytest.fixture(scope="module")

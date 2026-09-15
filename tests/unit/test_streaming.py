@@ -49,9 +49,9 @@ class _FakeStream:
     def __enter__(self) -> Any:
         return self._events
 
-    def __exit__(self, *_: Any) -> bool:
+    def __exit__(self, *_: Any) -> None:
         self.closed = True
-        return False  # never suppress; exceptions must reach the caller
+        # Returning None (never True) so exceptions always reach the caller.
 
 
 class _FakeRawResponse:
@@ -72,7 +72,7 @@ def _client_yielding(events: Any) -> tuple[ResponsesClient, dict[str, Any]]:
     assert the response was closed.
     """
     client = ResponsesClient.__new__(ResponsesClient)
-    client._config = CONFIG  # type: ignore[attr-defined]
+    client._config = CONFIG
 
     handle: dict[str, Any] = {}
 
@@ -95,7 +95,7 @@ def _client_yielding(events: Any) -> tuple[ResponsesClient, dict[str, Any]]:
     class _Inner:
         responses = _Responses()
 
-    client._client = _Inner()  # type: ignore[attr-defined]
+    client._client = _Inner()  # type: ignore[assignment]
     return client, handle
 
 

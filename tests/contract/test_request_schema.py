@@ -37,7 +37,8 @@ def valid_request(**overrides: Any) -> dict[str, Any]:
 
 
 def is_valid(validator: Draft7Validator, body: dict[str, Any]) -> bool:
-    return validator.is_valid(body)
+    valid: bool = validator.is_valid(body)
+    return valid
 
 
 # --- Happy path ------------------------------------------------------------

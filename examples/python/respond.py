@@ -84,7 +84,8 @@ def read_prompt(args: argparse.Namespace) -> str:
     if not args.prompt:
         raise SystemExit("error: provide a prompt argument or use --stdin.")
 
-    return args.prompt
+    prompt: str = args.prompt
+    return prompt
 
 
 def main() -> int:

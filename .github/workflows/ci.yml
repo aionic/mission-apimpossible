@@ -58,8 +58,12 @@ jobs:
       - name: Format check
         run: uv run ruff format --check .
 
+      # Deliberately the whole project, not just the client package. Checking
+      # examples/python/map_client alone reported success while nine type
+      # errors sat in the tests and the CLI example - a green signal covering a
+      # fraction of the code.
       - name: Type check
-        run: uv run mypy examples/python/map_client
+        run: uv run mypy .
 
   terraform:
     name: Terraform

@@ -125,9 +125,7 @@ def test_passthrough_fragment_adds_no_credential() -> None:
         "authentication-certificate",
         "api-key",
     ):
-        assert forbidden not in text, (
-            f"passthrough backend-auth must not use {forbidden}"
-        )
+        assert forbidden not in text, f"passthrough backend-auth must not use {forbidden}"
 
 
 def test_brokered_fragment_carries_human_identity() -> None:
@@ -351,8 +349,8 @@ def test_no_empty_trace_metadata_values() -> None:
         for meta in root.iter("metadata"):
             value = meta.get("value")
             assert value, (
-                f"{path.name}: <metadata name=\"{meta.get('name')}\"> has an empty "
-                f'value. APIM silently refuses to create the fragment. Use an '
+                f'{path.name}: <metadata name="{meta.get("name")}"> has an empty '
+                f"value. APIM silently refuses to create the fragment. Use an "
                 f'expression returning "" instead.'
             )
 
