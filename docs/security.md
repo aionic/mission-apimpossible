@@ -263,6 +263,24 @@ all-access APIM subscription is suspended.
 > flag**, so an exported secret would land in the azd environment file in
 > cleartext. Root outputs are identifiers, endpoints, and configuration only.
 
+### The local proxy's secret
+
+The local Entra proxy (`docs/local-proxy.md`) introduces the one secret in this
+design, and it is worth being precise about what it is and is not.
+
+It is **not** a credential for anything in Azure. It authorises use of a
+loopback listener and nothing else. It is generated per process start, held in
+memory, never written to disk, never logged, compared in constant time, and
+dies with the process. Off the machine it grants nothing, because the listener
+is not reachable off the machine.
+
+The token it exchanges that secret for is the **developer's own**, acquired
+through their own interactive sign-in and forwarded unmodified. Attribution is
+unchanged — `tid:oid` in telemetry still resolves to the human.
+
+That is why the runtime claim above still holds: there is no reusable
+authentication secret, and nothing in Azure accepts a key.
+
 ## Transport
 
 HTTPS enforced at the gateway; clients refuse a non-HTTPS endpoint before

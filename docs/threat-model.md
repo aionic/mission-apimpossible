@@ -251,6 +251,41 @@ it differently.
 
 ---
 
+## T18 — Local proxy loopback listener ⚠️
+
+**A local process abuses the Entra proxy to obtain inference as the developer.**
+
+Applies **only** when the local Entra proxy is running (`docs/local-proxy.md`).
+Goal 1 on its own does not create this exposure.
+
+The proxy exists so IDEs that only understand API keys can use the gateway. It
+presents a key-shaped surface on loopback and forwards the developer's real
+Entra token. While it runs, it is a process holding a live token, reachable
+from the machine it runs on.
+
+| | |
+| --- | --- |
+| **Control** | IPv4 loopback binding; per-session random secret; constant-time comparison; memory-only storage; process-lifetime scope |
+| **Implementation** | Binds `127.0.0.1` explicitly — never `0.0.0.0`, and never the name `localhost`, which can resolve to `::1` and produce a confusing mismatch. The secret is generated per start, never written to disk, never logged, and dies with the process. Only `POST /v1/responses` and `GET /v1/models` are served. |
+| **Residual risk** | **MEDIUM.** Any process running as this user can reach the listener while it is up. The secret raises the bar — an attacker must also read it from the IDE's storage or the proxy's output — but it does not eliminate the risk. Malware already executing as the developer can impersonate the IDE and spend that developer's quota under their identity. |
+| **Verification** | Confirm the listener is unreachable from another host on the network; confirm a wrong or absent secret is rejected; confirm the secret appears in no log, no file, and no telemetry; confirm the listener is gone once the process exits. |
+
+**Why this is accepted.** The alternative is that the gateway cannot be used
+from an IDE at all. The exposure is bounded to a single machine, requires local
+code execution to exploit, and grants nothing that the developer could not
+already do themselves — an attacker with code execution as the developer could
+equally run `az login` and call the gateway directly. What it does change is
+that they need not prompt for sign-in.
+
+**What it does not weaken.** Attribution is unaffected: the token is the
+developer's own, so `tid:oid` in telemetry still resolves to the human, and the
+per-user token limits still key on them. This is a courier, not an identity
+substitution — see `docs/local-proxy.md` for why that distinction is load
+bearing and why this is an explicit, recorded exception to the "no
+authentication shim" rule rather than a reinterpretation of it.
+
+---
+
 ## Summary
 
 | Threat | Public | Private |
@@ -272,6 +307,7 @@ it differently.
 | T15 Supply chain | MEDIUM | MEDIUM |
 | T16 Endpoint config | LOW | LOW |
 | T17 Public exposure | MEDIUM | MEDIUM |
+| **T18 Loopback listener** | **MEDIUM (only while the proxy runs)** | **MEDIUM (only while the proxy runs)** |
 
 \* Until the canary verification is performed against a live deployment.
 

@@ -17,8 +17,8 @@ flowchart LR
 
     subgraph AZURE["Azure subscription - public pattern"]
         subgraph APIM["API Management Standard v2 - public gateway"]
-            POL["Policy chain<br/>1 correlation<br/>2 validate-azure-ad-token single tenant<br/>3 trusted tid/oid extraction<br/>4 strip spoofable headers<br/>5 size + schema allowlist<br/>6 model allowlist<br/>7 enforce store=false<br/>8 llm-token-limit per tid:oid<br/>9 forward ORIGINAL bearer token"]:::gateway
-            APIMID["APIM managed identity<br/>Monitoring Metrics Publisher ONLY<br/>never granted model inference"]:::telemetry
+            POL["Policy chain<br/>1 correlation<br/>2 validate-azure-ad-token single tenant<br/>3 trusted tid/oid extraction<br/>4 strip spoofable headers<br/>5 size + schema allowlist<br/>6 model allowlist<br/>7 enforce store=false<br/>8 llm-token-limit per tid:oid<br/>9 attach credential per identity_mode"]:::gateway
+            APIMID["APIM managed identity<br/>Monitoring Metrics Publisher, plus<br/>Cognitive Services OpenAI User in brokered mode"]:::telemetry
         end
 
         subgraph AOAI["Azure OpenAI - public endpoint"]
@@ -38,8 +38,8 @@ flowchart LR
     VSC -->|"1 - Entra user token<br/>x-correlation-id + traceparent"| POL
     CLI -->|"1 - Entra user token<br/>x-correlation-id + traceparent"| POL
 
-    POL -->|"2 - SAME user bearer token<br/>canonical correlation + W3C context"| RESP
-    RESP -->|"3 - Entra RBAC authorizes the human"| MODEL
+    POL -->|"2 - brokered (default): APIM managed identity<br/>+ user_security_context carrying the human oid<br/>passthrough: the SAME user bearer token"| RESP
+    RESP -->|"3 - brokered: RBAC authorizes the GATEWAY<br/>passthrough: RBAC authorizes the HUMAN"| MODEL
     MODEL -->|"4 - SSE stream, not buffered"| POL
     POL -->|"5 - x-correlation-id + x-foundry-request-id"| VSC
 
@@ -48,6 +48,6 @@ flowchart LR
     AI --- LAW
     RESP -.-> LAW
 
-    BYPASS["RESIDUAL RISK<br/>A developer holding inference RBAC can reach<br/>the public Foundry endpoint directly and skip<br/>all gateway governance.<br/>Accepted for the public sample.<br/>Use the private pattern to prevent it."]:::risk
+    BYPASS["RESIDUAL RISK - passthrough mode only<br/>A developer holding inference RBAC can reach<br/>the public Foundry endpoint directly and skip<br/>all gateway governance.<br/>BROKERED mode (the default) removes this by<br/>capability: no human holds inference RBAC.<br/>Proven live - direct 401, gateway 200."]:::risk
     DEV -.->|"direct call is POSSIBLE"| BYPASS
     BYPASS -.-> RESP

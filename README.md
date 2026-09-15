@@ -188,6 +188,34 @@ Usage source       : reported
 
 There is no API key to configure. There is no key.
 
+### Use it from an IDE
+
+Most IDEs offer a "bring your own key" box — a base URL and a static secret.
+None of them can perform an interactive Entra sign-in or refresh an hourly
+token, so the gateway is unusable from them as-is.
+
+A small **local Entra proxy** closes that gap. It presents a key-shaped surface
+on loopback and forwards your real Entra token to the gateway:
+
+```
+IDE  ──127.0.0.1, local secret──▶  proxy  ──Bearer <your Entra token>──▶  APIM  ──▶  Foundry
+```
+
+The IDE thinks it is talking to an ordinary key-authenticated provider. The
+request that leaves your machine carries your own identity, and telemetry still
+attributes it to you. The demonstration is the point: **Copilot running in
+bring-your-own-key mode, where the key is not a key — it is Entra.**
+
+The proxy forwards the body **unchanged**. It translates nothing and rewrites
+nothing, so the gateway remains the single place the request contract is
+enforced and proven.
+
+> **Status: designed, not yet implemented.** See
+> [Local Entra proxy](docs/local-proxy.md) for the contract, the security
+> model, and why a local identity *courier* is not the server-side
+> authentication *shim* this design forbids — recorded as an explicit exception
+> with its own threat-model entry (T18).
+
 ### Tear down
 
 ```powershell
@@ -235,6 +263,7 @@ docs/           Architecture, security, threat model, cyber review.
 | Document | Read it for |
 | --- | --- |
 | [Architecture](docs/architecture.md) | Both patterns, runtime flow, identity boundaries |
+| [Local Entra proxy](docs/local-proxy.md) | Using the gateway from key-expecting IDEs |
 | [API contract](docs/api-contract.md) | What is allowed, what is rejected, status codes |
 | [Security](docs/security.md) | Controls, and the limits of each one |
 | [Threat model](docs/threat-model.md) | Threat → control → residual risk |
@@ -249,11 +278,28 @@ docs/           Architecture, security, threat model, cyber review.
 
 ## Status and honest limitations
 
-This repository is **scaffolded and validated offline. It has not yet been
-deployed to Azure.** Terraform validates, policy XML and invariants pass, and
-both architecture diagrams render — but no live proof exists yet.
+**Goal 1 is complete and proven against a live deployment.** A developer calls
+a Foundry model through APIM as themselves, with attribution, correlation, and
+no keys anywhere. Fourteen security controls pass; brokered identity is
+verified end to end (direct call `401`, through the gateway `200`).
 
-Tracked in beads (`bd ready`); see [`docs/platform-validation.md`](docs/platform-validation.md).
+**Goal 2 — using that endpoint from key-expecting IDEs — is designed, not yet
+built.** See [`docs/local-proxy.md`](docs/local-proxy.md).
+
+Gate evidence lives in
+[`docs/platform-validation.md`](docs/platform-validation.md); execution status
+is in beads (`bd ready`).
+
+| Gate | State |
+| --- | --- |
+| G1 token audience and claims | Proven — audience measured, not assumed |
+| G2 delegated-human authorization | Proven |
+| G5 token governance | Proven, and more interesting than expected — see below |
+| G7 request-validation ceilings | Proven — 14 hostile shapes fail closed; found and fixed two defects |
+| G8 private networking | Deployed to a second resource group, verified, destroyed |
+| G9 Terraform state contract | Audited — 23 resources, zero violations |
+| G3 IDE authentication | Partially proven; interactive flow needs a human |
+| G4 Windows jumpbox | **Unresolved by design** |
 
 Known unresolved items, stated rather than buried:
 
@@ -262,10 +308,19 @@ Known unresolved items, stated rather than buried:
   Windows VM *stores its password in state*. All three conflict with an agreed
   requirement. The module fails closed behind
   `acknowledge_unresolved_g4`.
+- **The private pattern is proven closed, not proven usable.** Public access is
+  disabled, the NSG rules deny the jumpbox subnet directly to the model, and an
+  authorized human is blocked from the internet. What has *not* been shown is a
+  developer inside the VNet succeeding through the gateway — that needs the
+  jumpbox, which G4 blocks.
+- **Only `rate-limit-by-key` constrains a burst.** With
+  `estimate-prompt-tokens="false"`, `llm-token-limit` cannot pre-charge, so it
+  never rejects a concurrent request — measured: ten simultaneous requests each
+  saw only their own consumption, and ~16,000 tokens crossed a 20,000 ceiling.
+  It is an after-the-fact ceiling, not a burst bound. `calls="2"` also admitted
+  **five** concurrent requests, because counters are per gateway node.
 - **Token accounting is approximate.** Quotas are operational safeguards, not
-  billing controls. Streamed prompt tokens are always estimated, counters are
-  per-gateway, and concurrent requests can overshoot. Azure Cost Management
-  remains the financial source of truth.
+  billing controls. Azure Cost Management remains the financial source of truth.
 - **The correlation chain ends at the gateway.** Foundry's `apim-request-id`
   is a support handle for raising a case — not a joinable trace segment. No
   first-party source establishes that `x-ms-client-request-id` is queryable
@@ -275,6 +330,9 @@ Known unresolved items, stated rather than buried:
 - **`Cognitive Services OpenAI User` is broader than Responses.** It is the
   least-privileged *built-in* role that works; a narrower custom role is a
   documented hardening option, not a default.
+- **Foundry reports a network denial as an authorization-shaped 401.** When a
+  private-pattern call fails, check `publicNetworkAccess` and the effective NSG
+  rules *before* touching role assignments.
 
 ---
 

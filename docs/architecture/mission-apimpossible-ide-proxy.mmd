@@ -1,0 +1,50 @@
+---
+title: Mission APIMpossible - IDE bring-your-own-key path via the local Entra proxy
+---
+flowchart TB
+    classDef actor fill:#E8F1FB,stroke:#0F6CBD,stroke-width:2px,color:#0B3B66
+    classDef proxy fill:#E3F2F1,stroke:#0E7C7B,stroke-width:2px,color:#06423F
+    classDef gateway fill:#E6F4EA,stroke:#107C41,stroke-width:2px,color:#0B3B2E
+    classDef model fill:#F3E8FD,stroke:#8661C5,stroke-width:2px,color:#3B2A5C
+    classDef telemetry fill:#FFF4E5,stroke:#C86A00,stroke-width:2px,color:#5C3A00
+    classDef risk fill:#FDE7E9,stroke:#C4314B,stroke-width:2px,color:#6B1220,stroke-dasharray: 5 4
+
+    DEV["Developer<br/>Microsoft Entra human identity"]:::actor
+
+    subgraph WS["Developer workstation - everything here runs AS the developer"]
+        direction TB
+        IDE["IDE bring-your-own-key client<br/>GitHub Copilot Custom Endpoint<br/>apiType: responses<br/>zeroDataRetentionEnabled: true"]:::actor
+        PROXY["Local Entra proxy<br/>127.0.0.1 IPv4 only<br/>validates per-session secret<br/>acquires and refreshes the user token<br/>forwards the body UNCHANGED"]:::proxy
+        RISK["RESIDUAL RISK - loopback listener<br/>Any process running as this user can reach<br/>the proxy while it runs. Mitigated by IPv4<br/>loopback binding, a per-session secret held<br/>only in memory, and exiting with the process.<br/>NOT mitigated against malware already<br/>running as you."]:::risk
+
+        IDE -->|"1 - POST http://127.0.0.1:PORT/v1/responses<br/>Authorization: Bearer LOCAL SECRET<br/>the IDE believes this is a key-auth provider"| PROXY
+        PROXY -->|"6 - SSE, streamed through untouched"| IDE
+        PROXY -.- RISK
+    end
+
+    subgraph AZURE["Azure subscription"]
+        direction TB
+        subgraph APIM["API Management Standard v2 - policy chain UNCHANGED"]
+            POL["validate-azure-ad-token, single tenant<br/>trusted tid/oid extraction<br/>size and schema allowlist<br/>model allowlist - now a SET<br/>enforce store=false<br/>llm-token-limit keyed on tid:oid"]:::gateway
+            APIMMI["APIM managed identity<br/>holds inference RBAC (brokered mode)<br/>and telemetry ingestion"]:::telemetry
+        end
+
+        subgraph AOAI["Azure OpenAI - local key auth DISABLED"]
+            RESP["POST /openai/v1/responses"]:::model
+            MODELS["Approved deployments<br/>multiple, allowlisted by name"]:::model
+        end
+
+        AI["Application Insights<br/>attribution lands on the HUMAN<br/>metadata only, zero body bytes"]:::telemetry
+    end
+
+    DEV -->|"interactive Entra sign-in"| PROXY
+    DEV -->|"pastes loopback URL and local secret once"| IDE
+
+    PROXY ==>|"2 - IDENTICAL body, byte for byte<br/>Authorization: Bearer DEVELOPER ENTRA TOKEN<br/>the credential is the ONLY thing swapped"| POL
+    POL -->|"3 - managed identity + user_security_context"| RESP
+    RESP --> MODELS
+    MODELS -->|"4 - SSE, unbuffered"| POL
+    POL ==>|"5 - streamed back"| PROXY
+
+    POL -.->|"tid:oid of the developer"| AI
+    APIMMI -.-> AI
