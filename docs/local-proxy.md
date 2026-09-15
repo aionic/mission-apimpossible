@@ -1,7 +1,7 @@
 # The local Entra proxy
 
-> Status: **design agreed, not yet implemented.** This document is the contract
-> the implementation must satisfy. Tracked as `map-41a` in beads.
+> Status: **working, proven end to end against GitHub Copilot.** See
+> "Proven" below. Tracked as `map-41a` in beads.
 
 ## The problem
 
@@ -37,6 +37,52 @@ gateway sees exactly what it always saw.
 
 The demonstration this produces is the point: **Copilot running in
 bring-your-own-key mode, where the key is not a key — it is Entra.**
+
+## Proven
+
+GitHub Copilot **agent mode**, running against a Foundry model through API
+Management, authenticated as the developer. Copilot reported *"Completed 2
+steps in 51s"* - it called tools, and the tool loop worked.
+
+| Evidence | Result |
+| --- | --- |
+| Requests through the proxy | `HTTP 200`, 90 tools, ~138 KB input per turn |
+| Attribution in telemetry | every request resolves to the human's `oid`, never a service principal |
+| Prompt text in telemetry | absent - three canary phrases searched across `traces`, `requests`, `dependencies`, `exceptions`, `customEvents` |
+| Telemetry actually flowing | 44 records in the window, so the empty canary result is a real absence rather than a missing pipeline |
+
+That last row matters. An empty search result proves nothing if ingestion is
+broken, so the record count is checked in the same breath.
+
+### What it took to get there
+
+Four rounds, and the pattern is worth recording because it repeated:
+
+1. **Blank model in the picker.** VS Code's *Add Models* UI had appended an
+   empty stub - `{"id":"","name":"","url":""}` - to the provider. Selecting it
+   produced `Failed to parse URL from /v1/chat/completions`, which reads like a
+   proxy fault and is not one. The writer now strips stubs on every start.
+2. **Canonical input shape.** Copilot sends `content` as
+   `[{type:"input_text",...}]` with an item-level `type:"message"`, not the
+   plain strings the schema required.
+3. **Size.** 133 KB of input and 88 tools per turn, against a 64 KiB cap. And
+   once the cap was raised, the requests returned `429` rather than `413` -
+   100 KiB of context is ~25,000 tokens against a 20,000 TPM ceiling, and the
+   daily quota allowed about three requests. Those limits had been sized for
+   single prompts.
+4. **One tool description.** `tools[].description` had `maxLength: 4096`. VS
+   Code's `run_in_terminal` ships 5,859 characters, so one tool out of 88
+   failed the entire request.
+
+Every one of those was a value invented rather than measured. The gateway's
+sanitised `invalid_request` - correct for production - says nothing about which
+field failed, so three rounds of reasoning got nowhere. Capturing the real body
+locally and validating it against the schema offline found the culprit in a
+single pass, and named the exact JSON path.
+
+**The lesson, kept deliberately:** capture mode is not scaffolding to be
+removed. It is how this integration was debugged, and it is how the next
+version of an IDE's wire format will be diagnosed.
 
 ## What the proxy must not do
 
@@ -181,15 +227,18 @@ with a translation layer it did not need.
 
 ## Accepted limitations
 
-**Tool calling is not enabled.** Copilot hides models without `toolCalling`
-from agent mode, so these models appear in ask mode only.
+**Client-side tool calling is enabled; hosted tools are not.** Agent mode works.
 
-This is a deliberate trade. Enabling tools would mean widening the Responses
-allowlist, and the strict surface currently has an empirical proof behind it —
-fourteen hostile request shapes, all failing closed, documented under gate G7.
-Ask mode is enough to demonstrate the identity story, which is the point of the
-sample. Client-side function tools remain a possible future addition; hosted
-tools, which move execution to the service, do not.
+The boundary is not "no tools" - it is **no server-side execution**. A
+client-side function tool is an ordinary request/response as far as the service
+is concerned: the model asks, the caller decides whether to run it, and
+execution happens on the developer''s machine. `code_interpreter`,
+`file_search`, `mcp`, `computer_use` and `web_search` move execution into the
+service and are rejected unconditionally, in both the schema and the policy.
+
+Declaring `toolCalling: false` was the original plan, on the grounds that ask
+mode was enough. That understated the cost: agent mode is the DEFAULT mode, so
+the model was effectively invisible in normal use.
 
 **No inline completions.** VS Code does not route inline suggestions to custom
 models; that path stays on GitHub's infrastructure regardless of this proxy.
@@ -197,14 +246,15 @@ models; that path stays on GitHub's infrastructure regardless of this proxy.
 **One tenant, one gateway.** The proxy is configured with a single gateway
 endpoint and tenant, matching the deployment it was generated for.
 
-## Open questions
+## Questions that capture answered
 
-| Question | How it gets answered |
+| Question | Measured answer |
 | --- | --- |
-| Does the IDE send `content` as a string or the canonical array? | Capture mode, before the schema is touched |
-| Does it exceed the 8 KiB `instructions` cap? | Capture mode |
-| Does it exceed the 48 KiB aggregate input bound in normal use? | Capture mode, over a realistic session |
-| Does `zeroDataRetentionEnabled` reliably produce `store: false`? | Capture mode; the gateway rejects the request if not |
+| String or canonical typed parts? | **Canonical** - `[{type:"input_text"}]`, with item-level `type:"message"` |
+| Does the system prompt exceed the 8 KiB `instructions` cap? | Not reached - Copilot puts everything in `input` |
+| Does a session exceed the input bound? | **Yes, hugely** - ~138 KB per turn, against an original 48 KiB |
+| Does `zeroDataRetentionEnabled` produce `store: false`? | **Yes** - observed on every request |
+| How many tools? | **88-90**, all `type: "function"`, largest description 5,859 chars |
 
 ## Related
 

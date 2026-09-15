@@ -228,11 +228,12 @@ The proxy forwards the body **unchanged**. It translates nothing and rewrites
 nothing, so the gateway remains the single place the request contract is
 enforced and proven.
 
-> **Status: designed, not yet implemented.** See
-> [Local Entra proxy](docs/local-proxy.md) for the contract, the security
-> model, and why a local identity *courier* is not the server-side
-> authentication *shim* this design forbids — recorded as an explicit exception
-> with its own threat-model entry (T18).
+> **Proven end to end with GitHub Copilot agent mode** — tool calling included,
+> every request attributed to the human in telemetry, no prompt text anywhere
+> in it. See [Local Entra proxy](docs/local-proxy.md) for the security model,
+> the four rounds of measurement it took, and why a local identity *courier* is
+> not the server-side authentication *shim* this design forbids — recorded as
+> an explicit exception with its own threat-model entry (T18).
 
 ### Tear down
 
@@ -301,8 +302,9 @@ a Foundry model through APIM as themselves, with attribution, correlation, and
 no keys anywhere. Fourteen security controls pass; brokered identity is
 verified end to end (direct call `401`, through the gateway `200`).
 
-**Goal 2 — using that endpoint from key-expecting IDEs — is designed, not yet
-built.** See [`docs/local-proxy.md`](docs/local-proxy.md).
+**Goal 2 is complete.** GitHub Copilot agent mode runs against the gateway as
+you, through a local proxy that swaps a loopback key for your Entra token and
+changes nothing else. See [`docs/local-proxy.md`](docs/local-proxy.md).
 
 Gate evidence lives in
 [`docs/platform-validation.md`](docs/platform-validation.md); execution status
