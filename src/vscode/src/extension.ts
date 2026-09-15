@@ -12,7 +12,7 @@
  */
 
 import * as vscode from 'vscode';
-
+import { DocumentAppender, type EditTarget } from './appender';
 import { AuthenticationError, acquireToken, describeSession } from './authentication';
 import { createRequestContext } from './correlation';
 import {
@@ -81,15 +81,25 @@ async function openResultDocument(): Promise<vscode.TextEditor> {
   return vscode.window.showTextDocument(document, { preview: false });
 }
 
-async function appendTo(editor: vscode.TextEditor, text: string): Promise<void> {
-  await editor.edit(
-    (builder) => {
-      const lastLine = editor.document.lineCount - 1;
-      const end = editor.document.lineAt(lastLine).range.end;
-      builder.insert(end, text);
-    },
-    { undoStopBefore: false, undoStopAfter: false },
-  );
+/**
+ * Adapts a VS Code editor to the appender's narrow edit interface.
+ *
+ * `edit()` resolves FALSE when the edit could not be applied - it does not
+ * throw. That boolean is the whole signal, and ignoring it is what produced
+ * silently truncated output.
+ */
+function editTargetFor(editor: vscode.TextEditor): EditTarget {
+  return {
+    applyEdit: async (text: string): Promise<boolean> =>
+      editor.edit(
+        (builder) => {
+          const lastLine = editor.document.lineCount - 1;
+          const end = editor.document.lineAt(lastLine).range.end;
+          builder.insert(end, text);
+        },
+        { undoStopBefore: false, undoStopAfter: false },
+      ),
+  };
 }
 
 async function runInvocation(
@@ -112,6 +122,7 @@ async function runInvocation(
   }
 
   const editor = await openResultDocument();
+  const appender = new DocumentAppender(editTargetFor(editor));
   const abort = new AbortController();
 
   await vscode.window.withProgress(
@@ -132,7 +143,8 @@ async function runInvocation(
           instructions,
           context,
           (delta) => {
-            void appendTo(editor, delta);
+            // Queued, not fired. The appender guarantees one edit in flight.
+            appender.append(delta);
           },
           abort.signal,
         );
@@ -157,7 +169,20 @@ async function runInvocation(
           '',
         ].join('\n');
 
-        await appendTo(editor, footer);
+        // Drain BEFORE the footer, so the metadata cannot land mid-sentence
+        // ahead of streamed text still waiting to be written.
+        await appender.drain();
+        appender.append(footer);
+        await appender.drain();
+
+        if (appender.lostCharacters > 0) {
+          vscode.window.showWarningMessage(
+            `Mission APIMpossible: ${appender.lostCharacters} characters could not be ` +
+              `written to the document. The output above is INCOMPLETE. ` +
+              `Quote correlation ID ${result.correlationId} when reporting this.`,
+          );
+          output.appendLine(`  WARNING lost ${appender.lostCharacters} characters on write`);
+        }
 
         output.appendLine(
           `  status=${result.status} foundryRequestId=${result.foundryRequestId ?? 'n/a'} ` +
