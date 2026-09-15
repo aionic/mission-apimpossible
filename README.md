@@ -78,12 +78,22 @@ falls to network controls.
 | Conditional Access at model boundary | Applies | Does not |
 | Blast radius of a policy mistake | Contained by Foundry RBAC | Total |
 
-\* **Important precondition.** Removing the account-scope role is not enough —
-a role inherited from subscription or management-group scope can still grant
-`Microsoft.CognitiveServices/*` as a dataAction. We hit exactly this: a
-pre-existing `Foundry User` assignment kept the bypass open while the account
-showed only the gateway identity. Run
-`.\scripts\verify-brokered-identity.ps1 -PrincipalId <oid>` before trusting it.
+\* **Important precondition, and it bites.** Removing the account-scope role is
+not enough — a role inherited from subscription or management-group scope can
+still grant `Microsoft.CognitiveServices/*` as a dataAction. We hit exactly
+this: a pre-existing `Foundry User` assignment kept the bypass open while the
+account showed only the gateway identity.
+
+After re-scoping that assignment, verified live with the same identity and the
+same token:
+
+```text
+direct to Foundry    HTTP 401  BLOCKED - no RBAC
+through the gateway  HTTP 200  WORKS
+```
+
+Run `.\scripts\verify-brokered-identity.ps1 -PrincipalId <oid>` before trusting
+brokered mode; `.\scripts\rescope-foundry-user.ps1` fixes the common cause.
 
 Full comparison, including the confused-deputy risk brokered mode accepts:
 [`docs/identity-modes.md`](docs/identity-modes.md).

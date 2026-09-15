@@ -98,6 +98,31 @@ Run this before trusting brokered mode:
 It enumerates inherited assignments, resolves each role definition, and fails
 if any confers Cognitive Services data actions.
 
+### Resolving it
+
+[`scripts/rescope-foundry-user.ps1`](../scripts/rescope-foundry-user.ps1)
+replaces one subscription-wide assignment with resource-group-scoped ones,
+preserving access everywhere except the gateway's own resource group. It
+creates the replacements **before** removing the broad grant, and prints the
+restore command first.
+
+Behaviour change to accept deliberately: a new AI account in a *new* resource
+group no longer inherits access and must be granted explicitly. That is better
+hygiene than a subscription-wide data-plane wildcard, but it is a change.
+
+### Verified end to end
+
+After re-scoping, with the same human identity and the same token:
+
+```text
+direct to Foundry    HTTP 401  BLOCKED - no RBAC
+through the gateway  HTTP 200  WORKS
+```
+
+All 14 gateway security controls still pass. That is the whole argument in one
+test: the bypass is closed by removing the permission, not by guarding the
+network path.
+
 ---
 
 ## Choosing
