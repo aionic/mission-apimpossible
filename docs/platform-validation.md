@@ -592,7 +592,42 @@ all-access subscription, which is disabled without reading its keys.
 | --- | --- |
 | Provider key-read behavior per resource | Source-observed at v5.5.0 |
 | Instrumentation key classified as identifier | Documented |
-| Field-level state inspection showing no credential material | **Pending** |
+| Field-level state inspection showing no credential material | **Empirical — see below** |
+
+### Empirical: audited the live public state, field by field
+
+Reproduce with `scripts/audit-state-secrets.ps1`. It walks every attribute of
+every resource, flags any leaf whose *name* suggests a credential, and then
+**classifies** rather than merely counting. Values are never printed; findings
+carry a length and a truncated SHA-256 so runs can be compared safely.
+
+Audited against the live public deployment: **23 resources, zero violations.**
+
+Every match was a permitted non-credential:
+
+| Attribute | Classification |
+| --- | --- |
+| `azurerm_application_insights.main.connection_string` | Telemetry ingestion identifier. Grants nothing on the model, gateway, or any host. |
+| `azurerm_application_insights.main.instrumentation_key` | Same — a telemetry write identifier. |
+| `azurerm_api_management_logger.app_insights...connection_string` | Same value, consumed by the logger. |
+| `azurerm_api_management.main...proxy.0.certificate_source` | The enum `"BuiltIn"`. Not a certificate — and the sibling `certificate` and `certificate_password` fields are both empty, which is what actually matters. |
+
+**The avoidance choices are confirmed to have worked, by absence:**
+
+| Expected risk | Outcome in state |
+| --- | --- |
+| `azurerm_log_analytics_workspace` stores shared keys | **Resource is not present.** The workspace is `azapi_resource.workspace`, whose `response_export_values` exports only `properties.customerId` — a workspace identifier. No shared key is read or stored. |
+| `azurerm_api_management_subscription` calls `ListSecrets` | **Resource is not declared.** The built-in all-access subscription is disabled through `azapi_resource_action`, which issues a PATCH and never reads keys. |
+| `azurerm_windows_virtual_machine` stores the admin password | Not present in the public profile. Remains the open question in G4. |
+
+The auditor also checks that no `*.tfplan`, `tfplan.binary`, or
+`*.tfstate.backup` is tracked in git — a saved plan is state under another
+name, and `.gitignore` has twice been found with a gap here.
+
+**Honest limit.** This proves state is clean *for the public profile*. The
+private profile adds no key-reading resource, but with `enable_test_access =
+true` it would add the Windows VM, and G4 is precisely the unresolved question
+of whether that can be done without a password in state.
 
 ---
 
@@ -658,7 +693,7 @@ records a verified tuple.
 | G5 llm policies | 429 normalization only | Enforcement **proven**; concurrency limits measured and documented |
 | G6 correlation | Observability acceptance | Yes |
 | G7 ceilings | Final size cap | Yes — conservative cap chosen |
-| G8 bypass | Private-pattern acceptance | Yes — rules written, unproven |
-| G9 state | State acceptance | Yes — AzAPI avoidance implemented |
+| G8 bypass | Private-pattern acceptance | Deployed, verified, destroyed; inside-VNet half blocked by G4 |
+| G9 state | State acceptance | **Audited** — 23 resources, zero violations |
 | G10 telemetry | Privacy acceptance | Yes — excluded by default |
 | G11 target | **Any deployment at all** | Yes — fails closed without input |
