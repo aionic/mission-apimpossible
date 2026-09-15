@@ -115,6 +115,19 @@ jobs:
       - name: Type check
         run: npx tsc -p ./ --noEmit
 
+      # `npm test` previously ran zero tests and exited 0, so this job was
+      # green on nothing while the SSE parser shipped two real bugs. The step
+      # below asserts a non-zero test count so the same hole cannot reopen.
+      - name: Unit tests
+        run: npm test 2>&1 | tee test-output.txt
+
+      - name: Assert tests actually ran
+        run: |
+          if grep -qE '^. tests 0$' test-output.txt; then
+            echo "::error::npm test reported zero tests. A passing run of nothing is not a passing run."
+            exit 1
+          fi
+
   diagrams:
     name: Architecture diagrams
     runs-on: ubuntu-latest

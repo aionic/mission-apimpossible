@@ -10,7 +10,9 @@
     "vscode": "^1.90.0",
     "node": ">=20.0.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
@@ -71,7 +73,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
-    "test": "node --test out/test/*.test.js",
+    "test": "tsc -p ./ && node --test \"out/test/*.test.js\"",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
