@@ -132,6 +132,19 @@ jobs:
             exit 1
           fi
 
+  publication:
+    name: Pre-publication review
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Runs without an Azure session, so the live-identifier comparison is
+      # skipped and the stale-claim, tracked-file, credential-pattern and
+      # link checks still run. Those are the ones that regress silently.
+      - name: Secrets, identifiers, stale claims, links
+        shell: pwsh
+        run: ./scripts/prepublication-check.ps1
+
   diagrams:
     name: Architecture diagrams
     runs-on: ubuntu-latest

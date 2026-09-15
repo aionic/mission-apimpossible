@@ -23,8 +23,8 @@ requires a documented threat model. That is the whole point.
 
 | Field | Type | Bound | Notes |
 | --- | --- | --- | --- |
-| `model` | string | ≤ 64 chars | Must equal the approved deployment. Re-checked by policy. |
-| `input` | string **or** text message array | 48 KiB / 40 messages | Client-maintained history only. |
+| `model` | string | ≤ 64 chars | Must equal an approved deployment. Re-checked by policy. |
+| `input` | string **or** message array | 768 KiB / 400 items | Client-maintained history only. `content` may be a plain string or the canonical `[{type:"input_text", text}]` array. |
 | `instructions` | string | 8 KiB | Optional. |
 | `stream` | boolean | — | SSE, forwarded unbuffered. |
 | `store` | boolean | must be `false` | Rejected if `true`; injected if omitted. |
@@ -32,10 +32,25 @@ requires a documented threat model. That is the whole point.
 | `temperature` | number | 0–2 | Omit for reasoning models. |
 | `top_p` | number | 0–1 | Optional. |
 | `reasoning.effort` | enum | — | `minimal`/`low`/`medium`/`high`. |
+| `truncation` | enum | `auto`/`disabled` | Transient context handling. Not persistence: `store:false` still applies. |
+| `tools` | array | ≤ 128, `type:"function"` only | **Client-side** tools. Name ≤ 128 chars, description ≤ 32 KiB. |
+| `tool_choice` | string or object | `auto`/`none`/`required`, or a named function | — |
+| `parallel_tool_calls` | boolean | — | Execution still happens on the caller's machine. |
 | `metadata` | object | ≤ 8 string values | Never used for authorization. |
+
+Message items may also be `function_call` and `function_call_output`, so a
+client can replay its own tool loop. Both are bounded and neither is
+interpreted by the gateway.
 
 `additionalProperties` is `false` at every level. Unknown fields — including
 fields Azure adds in future — are rejected rather than silently forwarded.
+
+> **These bounds are measured, not chosen.** A single GitHub Copilot agent turn
+> sends roughly 138 KB of input across 8–10 items with 88–90 tool definitions,
+> the largest description running to 5,859 characters. The original bounds —
+> 48 KiB, 40 items, 4,096-character descriptions — were invented, and rejected
+> every one of those requests. See gate G7 in
+> [platform validation](platform-validation.md).
 
 ## Rejected by default
 
@@ -44,9 +59,8 @@ fields Azure adds in future — are rejected rather than silently forwarded.
 | `store: true` | Would persist proprietary source server-side. Rejected rather than silently rewritten, so developer intent is never quietly changed. |
 | `previous_response_id`, `conversation` | Server-side conversation state. The client keeps context locally. |
 | `background` | Asynchronous execution outside the request's governance and correlation window. |
-| `tools`, `functions`, `tool_choice` | External interaction. Requires a per-tool allowlist and threat model. |
-| Remote MCP servers | External interaction with an unvetted endpoint. |
-| `computer-use` | Grants the model control of an environment. |
+| **Hosted tools** — `code_interpreter`, `file_search`, `mcp`, `computer_use`, `web_search` | They move execution to the **service**. The boundary this contract defends is not "no tools", it is "no server-side execution". Rejected unconditionally, in schema *and* policy, with no switch to relax it. |
+| `functions` | The superseded shape. Unreviewed; use `tools`. |
 | File, image, audio, PDF input parts | Payload exfiltration and content-handling surface. |
 | URL-bearing input structures | Server-side fetch of attacker-influenced URLs. |
 | Prompt references / prompt templates | Server-side stored artifacts. |
@@ -77,14 +91,37 @@ them.
 
 | Limit | Value | Reason |
 | --- | --- | --- |
-| HTTP request body | 64 KiB | Below every documented APIM ceiling. See gate G7. |
-| Aggregate input + instructions | 48 KiB | Bounds what a single request can carry. |
-| Message array | 40 entries | Bounds client-side history replay. |
+| HTTP request body | 1 MiB | **512 KiB proven** against the deployed gateway. See gate G7. |
+| `input` text | 768 KiB | Bounds what a single request can carry. |
+| Message array | 400 entries | Bounds client-side history replay. |
+| `tools` | 128 entries | An IDE sends its whole catalogue; 88–90 measured. |
+| Tool description | 32 KiB | Longest measured: 5,859 characters. |
 | `max_output_tokens` | 4096 | Bounds cost per request. |
 
-The documented ceilings conflict — the `validate-content` reference permits
-4 MB while the gateway runtime table lists 100 KiB for validated bodies. The
-conservative value is used until tested; see gate G7.
+The documented ceilings conflict — `validate-content` permits 4 MB, the gateway
+runtime table lists 100 KiB for validated bodies, and v2 has a separate 2 MiB
+buffered-payload limit. That contradiction was originally resolved by picking
+the smallest, 64 KiB.
+
+**Measurement settled it.** `scripts/probe-size-ceiling.ps1` passes 512 KiB
+through the deployed gateway without difficulty, so the 100 KiB figure does not
+apply to this path. Caution derived from an inapplicable limit is not caution,
+it is a gateway no IDE can use.
+
+## Rate limits
+
+| Limit | Value | Notes |
+| --- | --- | --- |
+| Tokens per minute | 200,000 | Per `tid:oid`. One agent turn can cost ~30,000. |
+| Daily token quota | 5,000,000 | Fixed UTC day, not a rolling window. |
+| Concurrent requests | 4 | Per user. Overshoots by gateway node count — see G5. |
+
+These were originally 20,000 / 100,000 / 2, which is a single-prompt budget: one
+IDE agent turn exceeded the entire per-minute ceiling, and the daily quota
+allowed about three requests.
+
+Quotas remain operational safeguards, not billing controls. Azure Cost
+Management is the financial source of truth.
 
 ## Status codes
 

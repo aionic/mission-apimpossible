@@ -28,11 +28,26 @@ param(
     [Parameter(Mandatory)]
     [string]$PrincipalId,
 
-    [string]$ResourceGroup = 'rg-map-map-public-example',
-    [string]$AccountName   = 'oai-map-map-public-example'
+    # Default to the deployed environment via Terraform outputs rather than a
+    # hardcoded name, so this works for anyone who deploys the sample and puts
+    # no environment identifiers in a public repository.
+    [string]$ResourceGroup,
+    [string]$AccountName
 )
 
 $ErrorActionPreference = 'Stop'
+
+if (-not $ResourceGroup -or -not $AccountName) {
+    $infra = Join-Path (Split-Path -Parent $PSScriptRoot) 'infra'
+    $raw = & terraform "-chdir=$infra" output -json 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $raw) {
+        throw "Could not read Terraform outputs. Pass -ResourceGroup and -AccountName explicitly, or deploy first."
+    }
+    $out = $raw | ConvertFrom-Json
+    if (-not $ResourceGroup) { $ResourceGroup = $out.RESOURCE_GROUP_NAME.value }
+    if (-not $AccountName) { $AccountName = $out.FOUNDRY_ACCOUNT_NAME.value }
+    Write-Host "Using the deployed environment: $AccountName in $ResourceGroup" -ForegroundColor DarkGray
+}
 
 $accountId = az cognitiveservices account show -n $AccountName -g $ResourceGroup --query id -o tsv
 if (-not $accountId) { throw "Could not resolve the Foundry account $AccountName in $ResourceGroup." }

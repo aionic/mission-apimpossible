@@ -148,7 +148,7 @@ print(json.dumps({'model': os.environ['MAP_MODEL'], 'input': 'x'*100000, 'store'
 ")
 ```
 
-Expect `400`. The cap is 64 KiB, below every documented APIM ceiling.
+Expect `400`. The cap is 1 MiB; 512 KiB is proven to pass. Size the payload from `max_request_bytes`, not from this sentence.
 
 ---
 

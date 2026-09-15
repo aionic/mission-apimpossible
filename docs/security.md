@@ -112,16 +112,40 @@ Exactly one deployment exists, and policy independently rejects any other
 
 | Limit | Value |
 | --- | --- |
-| Request body | 64 KiB |
-| Aggregate input + instructions | 48 KiB |
-| Message history | 40 entries |
+| Request body | 1 MiB (512 KiB proven) |
+| `input` text | 768 KiB |
+| Message history | 400 entries |
+| `tools` | 128, `type:"function"` only |
+| Tool description | 32 KiB |
 | `max_output_tokens` | 4096 |
 
-> **Limit.** The documented APIM ceilings **conflict** — the `validate-content`
-> reference permits 4 MB while the gateway runtime table lists 100 KiB for
-> validated bodies. 64 KiB sits below every documented value. Behavior with
-> chunked, compressed, or missing-`Content-Length` requests is untested (gate
-> G7).
+> **These are measured, not chosen.** The originals — 64 KiB body, 48 KiB
+> input, 40 messages, 4,096-character tool descriptions — were set below every
+> documented ceiling and rejected every real IDE request. A single GitHub
+> Copilot agent turn carries ~138 KB of input and 88–90 tool definitions, one
+> of them 5,859 characters long.
+
+> **Limit.** The documented APIM ceilings **conflict** — `validate-content`
+> permits 4 MB, the gateway runtime table lists 100 KiB for validated bodies,
+> and v2 has a separate 2 MiB buffered limit. Probing the deployed gateway
+> passes 512 KiB comfortably, so the 100 KiB figure does not govern this path
+> (gate G7). Chunked, compressed and missing-`Content-Length` requests are
+> tested and fail closed.
+
+### Tool calling
+
+Client-side **function** tools are accepted. Hosted tools — `code_interpreter`,
+`file_search`, `mcp`, `computer_use`, `web_search` — are rejected
+unconditionally, in both the schema and the policy, with no configuration
+switch to relax it.
+
+> The property being defended is **not** "no tools". It is **no server-side
+> execution**. A client-side function tool is an ordinary request/response as
+> far as the service is concerned: the model asks, the caller decides whether
+> to run it, and execution happens on the developer's machine. A hosted tool
+> moves execution into the service. Enforced twice on purpose — a missing
+> `schema-ref` once made this repository's entire request allowlist a runtime
+> no-op, so the policy check is what survives the next schema mistake.
 
 ### Header control
 

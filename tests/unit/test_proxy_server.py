@@ -36,7 +36,7 @@ class _FakeCredential:
 def _config() -> ProxyConfig:
     return ProxyConfig(
         gateway_endpoint="https://example.azure-api.net/openai/v1/responses",
-        tenant_id="11111111-1111-1111-1111-111111111111",
+        tenant_id="00000000-1111-2222-3333-444444444444",
         scope="https://ai.azure.com/.default",
         models=(
             ModelEntry(deployment="coding-model", display_name="Coding model"),

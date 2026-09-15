@@ -503,7 +503,7 @@ remove rather than claiming a perfect allowlist.
 
 | Check | Status |
 | --- | --- |
-| Conservative 64 KiB cap is within every documented ceiling | Documented |
+| 512 KiB passes the deployed gateway | **Empirical** - the 100 KiB runtime-table figure does not govern this path |
 | Immutable transport headers | Documented |
 | Behavior with missing `Content-Length`, chunked, and compressed bodies | **Empirical — see below** |
 

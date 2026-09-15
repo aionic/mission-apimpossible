@@ -36,12 +36,27 @@ param(
 
     [string]$RoleName = 'Foundry User',
 
-    [string]$ExcludeResourceGroup = 'rg-map-map-public-example',
+    # The resource group to LEAVE OUT of the replacement grants - normally the
+    # one this sample deployed, whose account must stay unreachable by humans.
+    # Deliberately has no default: a wrong value here silently re-grants the
+    # very access this script exists to remove.
+    [Parameter(Mandatory)]
+    [string]$ExcludeResourceGroup,
 
-    [string]$SubscriptionId = '00000000-0000-0000-0000-000000000000'
+    # Defaults to the current az subscription rather than a hardcoded one, so
+    # this works in any tenant and puts no environment identifiers in a public
+    # repository.
+    [string]$SubscriptionId
 )
 
 $ErrorActionPreference = 'Stop'
+
+if (-not $SubscriptionId) {
+    $SubscriptionId = (az account show --query id -o tsv)
+    if (-not $SubscriptionId) { throw "No subscription selected. Run: az login" }
+    Write-Host "Using the current subscription: $SubscriptionId" -ForegroundColor DarkGray
+}
+
 $subScope = "/subscriptions/$SubscriptionId"
 
 Write-Host ""

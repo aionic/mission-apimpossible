@@ -18,7 +18,7 @@ from map_proxy.tokens import load_or_create_key
 def _config(port: int = 8787) -> ProxyConfig:
     return ProxyConfig(
         gateway_endpoint="https://example.azure-api.net/openai/v1/responses",
-        tenant_id="11111111-1111-1111-1111-111111111111",
+        tenant_id="00000000-1111-2222-3333-444444444444",
         scope="https://ai.azure.com/.default",
         models=(
             ModelEntry(deployment="coding-model", display_name="Coding model"),
