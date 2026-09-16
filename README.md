@@ -173,6 +173,7 @@ itself is worse than none.
 
 | | |
 | --- | --- |
+| [Configuration](docs/configuration.md) | Every setting, and when to change it |
 | [API contract](docs/api-contract.md) | What is allowed, what is rejected, and why |
 | [Observability](docs/observability.md) | What is recorded, and what deliberately is not |
 | [Enterprise adoption](docs/enterprise-adoption.md) | Taking this into a real environment |

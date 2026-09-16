@@ -191,7 +191,7 @@ def test_oversized_input_is_rejected(validator: Draft7Validator) -> None:
 
 
 def test_too_many_messages_is_rejected(validator: Draft7Validator) -> None:
-    body = valid_request(input=[{"role": "user", "content": "hi"} for _ in range(401)])
+    body = valid_request(input=[{"role": "user", "content": "hi"} for _ in range(1001)])
     assert not is_valid(validator, body)
 
 

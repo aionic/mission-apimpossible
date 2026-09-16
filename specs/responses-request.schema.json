@@ -25,7 +25,7 @@
         {
           "type": "array",
           "minItems": 1,
-          "maxItems": 400,
+          "maxItems": 1000,
           "comment": "Inlined deliberately. A '#/definitions/...' $ref is resolved relative to the DOCUMENT root, and APIM stores this schema nested under components.schemas, so the pointer would not resolve at runtime and the array form would silently fail open.",
           "items": {
             "comment": "Three item shapes. A text turn is the original contract - and it accepts BOTH a plain string and the canonical array of typed parts, because a real IDE sends the latter: GitHub Copilot was measured sending content as [{type:input_text,text:...}] with an item-level type of 'message'. The two function_call shapes exist ONLY so a CLIENT-SIDE tool loop can replay its own prior turns: the model asks, the CLIENT executes on its own machine, and the client sends the result back. The service never executes anything.",
@@ -194,7 +194,7 @@
       "description": "CLIENT-SIDE function tools only. The model may ask for one to be called; the caller decides whether to run it, runs it on its own machine, and sends the result back. The service executes nothing. 'type' is const 'function' precisely so hosted tools - code_interpreter, file_search, mcp, computer_use, web_search - cannot be named here: those move execution server-side, which is the property this contract exists to protect.",
       "type": "array",
       "minItems": 1,
-      "maxItems": 128,
+      "maxItems": 256,
       "items": {
         "type": "object",
         "additionalProperties": false,

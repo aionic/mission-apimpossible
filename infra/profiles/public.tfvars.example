@@ -73,11 +73,11 @@ apim_publisher_email = "" # team alias, not a personal address
 # These per-user limits are keyed on tid:oid, so adding developers does NOT
 # consume them faster. model_capacity above is the shared one, and it is what
 # actually runs out as a team grows.
-tokens_per_minute                = 200000
-daily_token_quota                = 5000000
-max_concurrent_requests_per_user = 4
+tokens_per_minute                = 1000000
+daily_token_quota                = 50000000
+max_concurrent_requests_per_user = 12
 max_request_bytes                = 1048576
-backend_timeout_seconds          = 120
+backend_timeout_seconds          = 300
 
 # Leave false until gate G5 proves the quota 403 is reliably distinguishable
 # from an RBAC 403. Blanket-remapping 403 would mask real authorization

@@ -24,7 +24,7 @@ requires a documented threat model. That is the whole point.
 | Field | Type | Bound | Notes |
 | --- | --- | --- | --- |
 | `model` | string | ≤ 64 chars | Must equal an approved deployment. Re-checked by policy. |
-| `input` | string **or** message array | 768 KiB / 400 items | Client-maintained history only. `content` may be a plain string or the canonical `[{type:"input_text", text}]` array. |
+| `input` | string **or** message array | 768 KiB / 1000 items | Client-maintained history only. `content` may be a plain string or the canonical `[{type:"input_text", text}]` array. |
 | `instructions` | string | 8 KiB | Optional. |
 | `stream` | boolean | — | SSE, forwarded unbuffered. |
 | `store` | boolean | must be `false` | Rejected if `true`; injected if omitted. |
@@ -33,7 +33,7 @@ requires a documented threat model. That is the whole point.
 | `top_p` | number | 0–1 | Optional. |
 | `reasoning.effort` | enum | — | `minimal`/`low`/`medium`/`high`. |
 | `truncation` | enum | `auto`/`disabled` | Transient context handling. Not persistence: `store:false` still applies. |
-| `tools` | array | ≤ 128, `type:"function"` only | **Client-side** tools. Name ≤ 128 chars, description ≤ 32 KiB. |
+| `tools` | array | ≤ 256, `type:"function"` only | **Client-side** tools. Name ≤ 128 chars, description ≤ 32 KiB. |
 | `tool_choice` | string or object | `auto`/`none`/`required`, or a named function | — |
 | `parallel_tool_calls` | boolean | — | Execution still happens on the caller's machine. |
 | `metadata` | object | ≤ 8 string values | Never used for authorization. |
@@ -89,6 +89,8 @@ them.
 
 ## Recommended configuration
 
+> Full reference for every setting: [configuration](configuration.md).
+
 The defaults suit one developer evaluating the pattern. Adopting it for a team
 means changing two things that are easy to confuse, because they scale
 differently.
@@ -101,35 +103,9 @@ consume them faster. They bound what *one* person can do.
 once. This is what actually runs out as a team grows, and when it does, Foundry
 throttles — not the gateway.
 
-Sizing from a measured agent turn of roughly 30,000 tokens:
-
-| | Per-user TPM | Daily quota | Concurrent | Model capacity |
-| --- | --- | --- | --- | --- |
-| **One developer, evaluating** | 200,000 | 5,000,000 | 4 | 100 |
-| **Small team, 5–10** | 200,000 | 5,000,000 | 4 | 500 |
-| **Team, 25–50** | 200,000 | 10,000,000 | 6 | 1,000+ |
-
-Reasoning behind those numbers:
-
-- **200,000 TPM per user** allows roughly six agent turns a minute. A developer
-  working steadily sustains far less; the headroom absorbs bursts, which is
-  what actually happens when an agent chains tool calls.
-- **Model capacity 500** is about 500,000 TPM shared. At a sustained ~60,000
-  TPM per active developer that supports around eight working simultaneously —
-  not eight *enrolled*, eight actively mid-request.
-- **Daily quota** at 5,000,000 is roughly 160 agent turns. Raise it before
-  raising per-minute limits; hitting a daily ceiling mid-afternoon is a worse
-  experience than a brief throttle.
-- **Concurrency of 4** is a coarse guard and it **overshoots**, because the
-  counter is per gateway node. Treat it as approximate; see gate G5.
-
-Check your quota before raising capacity:
-
-```powershell
-az cognitiveservices usage list -l <region> `
-  --query "[?contains(name.value,'<model>')].{name:name.localizedValue,used:currentValue,limit:limit}" -o table
-```
-
+Sizing tables, per-scenario guidance and the quota command live in
+[configuration](configuration.md#model). The short version: per-user limits do
+not scale with team size; `model_capacity` does, and it is what runs out.
 **`max_output_tokens` deserves thought.** The gateway permits up to 32,768. A
 coding agent writing a file needs several thousand; the original 4,096 ceiling
 truncated answers rather than failing visibly, which is the worst outcome — the
@@ -148,8 +124,8 @@ reached them. Raise them only if a client genuinely needs more.
 | --- | --- | --- |
 | HTTP request body | 1 MiB | **512 KiB proven** against the deployed gateway. See gate G7. |
 | `input` text | 768 KiB | Bounds what a single request can carry. |
-| Message array | 400 entries | Bounds client-side history replay. |
-| `tools` | 128 entries | An IDE sends its whole catalogue; 88–90 measured. |
+| Message array | 1000 entries | Bounds client-side history replay. |
+| `tools` | 256 entries | An IDE sends its whole catalogue; 88–90 measured. |
 | Tool description | 32 KiB | Longest measured: 5,859 characters. |
 | `max_output_tokens` | 32768 | Bounds cost per request. 4096 truncated real coding work. |
 
@@ -167,9 +143,9 @@ it is a gateway no IDE can use.
 
 | Limit | Value | Notes |
 | --- | --- | --- |
-| Tokens per minute | 200,000 | Per `tid:oid`. One agent turn can cost ~30,000. |
-| Daily token quota | 5,000,000 | Fixed UTC day, not a rolling window. |
-| Concurrent requests | 4 | Per user. Overshoots by gateway node count — see G5. |
+| Tokens per minute | 1,000,000 | Per `tid:oid`. One agent turn can cost ~30,000. |
+| Daily token quota | 50,000,000 | Fixed UTC day, not a rolling window. |
+| Concurrent requests | 12 | Per user. Overshoots by gateway node count — see G5. |
 
 These were originally 20,000 / 100,000 / 2, which is a single-prompt budget: one
 IDE agent turn exceeded the entire per-minute ceiling, and the daily quota
