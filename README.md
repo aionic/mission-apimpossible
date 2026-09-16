@@ -2,20 +2,10 @@
 
 # Mission APIMpossible
 
-[![CI](https://github.com/aionic/mission-apimpossible/actions/workflows/ci.yml/badge.svg)](https://github.com/aionic/mission-apimpossible/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![API keys: zero](https://img.shields.io/badge/API_keys-zero-2EA043)](docs/security.md)
 [![Auth: Microsoft Entra ID](https://img.shields.io/badge/Auth-Microsoft_Entra_ID-0078D4)](docs/architecture.md#identity-modes)
-
-[![Azure API Management](https://img.shields.io/badge/Azure_API_Management-Standard_v2-0078D4)](docs/architecture.md)
-[![Azure AI Foundry](https://img.shields.io/badge/Azure_AI_Foundry-Responses_API-0078D4)](docs/api-contract.md)
 [![Terraform](https://img.shields.io/badge/Terraform-1.16-7B42BC?logo=terraform&logoColor=white)](infra/)
-[![Azure Developer CLI](https://img.shields.io/badge/azd-Developer_CLI-0078D4)](azure.yaml)
-
-[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](examples/python/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](src/vscode/)
-[![VS Code](https://img.shields.io/badge/VS_Code-1.90+-007ACC)](src/vscode/)
-[![GitHub Copilot](https://img.shields.io/badge/GitHub_Copilot-agent_mode_proven-000000?logo=githubcopilot&logoColor=white)](docs/local-proxy.md)
 
 **Your developers use AI coding models with their own identity. No API keys. No shared secrets. Every request attributable to a person.**
 
