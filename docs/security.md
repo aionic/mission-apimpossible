@@ -134,9 +134,19 @@ developer's stated intent hides a security-relevant decision from them.
 `specs/responses-request.schema.json` sets `additionalProperties: false` at
 every level. Features that did not exist at review time fail closed.
 
-Rejected: tools, functions, MCP, computer use, file/image/audio inputs,
-URL-bearing structures, `previous_response_id`, `conversation`, `background`,
-prompt references, `multi_agent`, `context_management`, preview opt-in headers.
+Rejected: **hosted** tools (`code_interpreter`, `file_search`, `mcp`,
+`computer_use`, `web_search`), the superseded `functions` shape, file, image and
+audio inputs, URL-bearing structures, `previous_response_id`, `conversation`,
+`background`, prompt references, `multi_agent`, `context_management`, and
+preview opt-in headers.
+
+**Client-side `function` tools are accepted.** The boundary is not "no tools" —
+it is **no server-side execution**. The model may ask for a tool; the caller
+decides whether to run it, and execution happens on the developer's machine. A
+hosted tool moves execution into the service, which is the thing this contract
+exists to prevent. Rejected in the schema *and* independently in policy,
+because a missing `schema-ref` once made this repository's entire request
+allowlist a runtime no-op.
 
 > **Limit.** A URL typed inside a plain text prompt is inert — nothing fetches
 > it. Prohibiting URL-bearing *features* is not the same as banning the
@@ -151,14 +161,18 @@ Exactly one deployment exists, and policy independently rejects any other
 
 ### Size limits
 
-| Limit | Value |
-| --- | --- |
-| Request body | 1 MiB (512 KiB proven) |
-| `input` text | 768 KiB |
-| Message history | 400 entries |
-| `tools` | 128, `type:"function"` only |
-| Tool description | 32 KiB |
-| `max_output_tokens` | 4096 |
+Bounds are enforced on bytes, and every value was measured from real IDE
+traffic rather than chosen. The current numbers live in
+[configuration](configuration.md#size-limits) — deliberately in one place, so
+they cannot drift out of step with the schema.
+
+The security-relevant properties, which do not change with the numbers:
+
+- oversize, malformed, chunked, compressed and invalid-UTF-8 bodies **fail
+  closed**, verified by `scripts/verify-request-validation.ps1`;
+- a `500` would be a failure of this contract, not merely an unhelpful status;
+- **lowering** these bounds rejects legitimate IDE requests. The original
+  conservative values rejected every GitHub Copilot request that reached them.
 
 > **These are measured, not chosen.** The originals — 64 KiB body, 48 KiB
 > input, 40 messages, 4,096-character tool descriptions — were set below every

@@ -94,7 +94,7 @@ Manage access afterwards in **Entra → Enterprise applications → Mission
 APIMpossible Gateway → Users and groups**. Removing someone there removes their
 access, immediately, with no key to rotate.
 
-### Step 2b — Observe the token audience (gate G1)
+### Step 3 — Observe the token audience (gate G1)
 
 Confirm the audience that actually appears in a token, rather than trusting a
 `.default` scope string.
@@ -122,7 +122,7 @@ Record `appid`/`azp` → `allowed_client_app_ids`.
 > its application ID. A custom API needs this; a first-party audience did not,
 > which is part of why the original mistake looked correct.
 
-### Step 3 — Configure
+### Step 4 — Configure
 
 ```powershell
 Copy-Item infra\profiles\public.tfvars.example infra\profiles\public.tfvars
@@ -156,7 +156,7 @@ az ad signed-in-user show --query id -o tsv
 > `inference_principal_ids` is **not** automatically the principal running azd.
 > Set it explicitly; a group object ID is preferable.
 
-### Step 4 — Deploy
+### Step 5 — Deploy
 
 ```powershell
 az login --tenant <tenant-id>
@@ -170,7 +170,7 @@ invariants.
 
 APIM Standard v2 provisioning typically takes 30–45 minutes.
 
-### Step 5 — Verify
+### Step 6 — Verify
 
 ```powershell
 .\scripts\postprovision.ps1
@@ -196,7 +196,7 @@ curl.exe -i -X POST $env:MAP_ENDPOINT `
 
 Expect `400 store_not_permitted`.
 
-### Step 6 — Confirm telemetry is clean
+### Step 7 — Confirm telemetry is clean
 
 ```powershell
 uv run python examples/python/respond.py "CANARY-e3f1a9-DO-NOT-LOG please echo nothing"
@@ -218,7 +218,7 @@ result proves only that ingestion is broken:
 traces | where timestamp > ago(1h) | where message == "responses.invocation" | take 5
 ```
 
-### Step 7 — Observe the bypass
+### Step 8 — Observe the bypass
 
 ```powershell
 $foundry = (azd env get-values --output json | ConvertFrom-Json).FOUNDRY_DIRECT_ENDPOINT
@@ -279,22 +279,6 @@ azd down --purge
 `--purge` is important: soft-deleted Cognitive Services accounts hold the
 custom subdomain and block redeploying under the same name.
 
-### Troubleshooting
-
-| Symptom | Cause |
-| --- | --- |
-| `401` | Token audience mismatch — re-run step 2 |
-| `403 not_delegated_identity` | Using a service principal; sign in as a user |
-| Commands missing from the palette | Installed with `code` while running Insiders. Reinstall with `code-insiders`. |
-| `endpoint is not configured` in Insiders | Settings were set in the stable `settings.json`. Insiders uses its own. |
-| `403 unapproved_client` | Client app not in `allowed_client_app_ids` |
-| `403` from backend | Missing `Cognitive Services OpenAI User` on the account |
-| `400 unapproved_model` | `MAP_MODEL` ≠ `model_deployment_name` |
-| Provisioning fails on quota | Insufficient capacity in the region |
-| Provisioning fails on role assignment | Need User Access Administrator |
-
-
----
 
 ## Private pattern
 
@@ -471,20 +455,6 @@ created them.
 > An `azapi_update_resource` destruction does not revert its property change.
 > That is fine here because teardown removes the whole service.
 
-### Troubleshooting
-
-| Symptom | Cause |
-| --- | --- |
-| Gateway unreachable from jumpbox | DNS not resolving the private zone; check the zone VNet link |
-| Gateway unreachable from corporate | `corporate_address_prefixes` missing your range |
-| **Direct model call succeeds** | **Regression.** Check `private_endpoint_network_policies = "NetworkSecurityGroupEnabled"` and NSG rule priorities |
-| APIM provisioning fails | Integration subnet not delegated to `Microsoft.Web/serverFarms`, or smaller than `/27` |
-| Public access re-enabled after apply | Two owners for the property — the AzureRM resource must ignore it |
-| Bastion Entra option missing | SKU below Standard, or extension not provisioned. See [gate G4](platform-validation.md) |
-| Terraform fails on `acknowledge_unresolved_g4` | Working as intended. Read [gate G4](platform-validation.md) |
-
-
----
 
 ## Optional Windows test access
 
@@ -660,18 +630,6 @@ curl.exe -i https://<foundry-account>.openai.azure.com/openai/v1/responses
 Your identity holds valid inference RBAC in both cases. The difference is
 purely network policy — which is exactly the property being demonstrated.
 
-### Troubleshooting
-
-| Symptom | Likely cause |
-| --- | --- |
-| Entra option missing in portal | Bastion SKU below Standard, extension not provisioned, or region lacks the preview |
-| Native RDP rejects sign-in | Connecting PC not Entra joined to the same directory |
-| Gateway call fails from the VM | DNS not resolving the private zone, or APIM PE NSG rules |
-| Direct model call **succeeds** | **Anti-bypass regression** — check `private_endpoint_network_policies` is enabled, without which the NSG is not evaluated |
-| Bootstrap account still enabled | Entra sign-in not confirmed healthy; check `C:\ProgramData\MissionAPIMpossible\bootstrap.log` |
-
-
----
 
 ## Pinned versions
 
@@ -780,3 +738,69 @@ Remove it manually when you are finished with the pattern entirely:
 ```powershell
 az ad app delete --id <app-id>
 ```
+---
+
+## Troubleshooting
+
+Grouped by where the failure happens, because the same symptom means different
+things depending on which pattern you are running.
+
+### Identity and authorisation
+
+| Symptom | Cause |
+| --- | --- |
+| `401` | Token audience mismatch. Confirm `api_audience` matches the application from step 2 |
+| `401` and you are certain the audience is right | Entra refused the token — you are not assigned to the gateway application |
+| `403 not_authorized` | Valid identity, but the token lacks `required_scope` |
+| `403 not_delegated_identity` | Using a service principal; sign in as a person |
+| `403 unapproved_client` | Client application not in `allowed_client_app_ids` |
+| `403` from the backend | **`passthrough` only** — missing `Cognitive Services OpenAI User`. In `brokered` mode this should not happen |
+| `AADSTS65001` consent prompt | Client not pre-authorised. Re-run `create-gateway-app.ps1 -PreAuthorizeClient <id>` |
+
+### Requests
+
+| Symptom | Cause |
+| --- | --- |
+| `400 unapproved_model` | `MAP_MODEL` does not match `model_deployment_name` |
+| `400 invalid_request` and the reason is not obvious | The gateway deliberately does not name the failing field. Capture locally with `map_proxy --capture-text` and validate offline — see [platform validation](platform-validation.md) |
+| `400 hosted_tool_not_permitted` | A hosted tool was requested. Only client-side `function` tools are accepted |
+| `400 store_not_permitted` | `store: true` was sent explicitly |
+| `429` | Per-user limit. Check which one — `llm-token-limit` sets `x-ratelimit-remaining-tokens`, `rate-limit-by-key` does not |
+
+### Provisioning
+
+| Symptom | Cause |
+| --- | --- |
+| Fails on quota | Insufficient model capacity in the region |
+| Fails on role assignment | You need User Access Administrator |
+| Fails on `acknowledge_unresolved_g4` | Working as intended. Read [gate G4](platform-validation.md) |
+| Fails with `required_scope` empty | Working as intended — `brokered` mode needs an authorisation check |
+| APIM provisioning fails *(private)* | Integration subnet not delegated to `Microsoft.Web/serverFarms`, or smaller than `/27` |
+| Teardown fails, resource group "still contains resources" | The auto-created `Failure Anomalies` alert rule. Run `scripts/predown.ps1` |
+
+### Network — private pattern
+
+| Symptom | Cause |
+| --- | --- |
+| **Direct model call succeeds** | **Anti-bypass regression.** Check `private_endpoint_network_policies = "NetworkSecurityGroupEnabled"` — without it the NSG is not evaluated — and the rule priorities |
+| Public access re-enabled after apply | Two owners for the property; the AzureRM resource must ignore it |
+| Gateway unreachable from the jumpbox | Private DNS zone not resolving; check the zone's VNet link |
+| Gateway unreachable from corporate | Your range is missing from `corporate_address_prefixes` |
+| A call fails and it looks like RBAC | **Check the network first.** Foundry reports a network denial as an authorisation-shaped `401` that never mentions the network |
+
+### Jumpbox
+
+| Symptom | Cause |
+| --- | --- |
+| Bastion Entra option missing | SKU below Standard, extension not provisioned, or the region lacks it |
+| Native RDP rejects sign-in | The connecting PC is not Entra joined to the same directory |
+| Bootstrap account still enabled | Entra sign-in not confirmed healthy; check `C:\ProgramData\MissionAPIMpossible\bootstrap.log` |
+
+### IDE
+
+| Symptom | Cause |
+| --- | --- |
+| Commands missing from the palette | Installed with `code` while running Insiders. Reinstall with `code-insiders` |
+| `endpoint is not configured` in Insiders | Settings were written to the stable `settings.json`; Insiders keeps its own |
+| A blank, unnamed model in the picker | VS Code's *Add Models* UI appended an empty stub. Restart the proxy — it strips them |
+| Model absent from agent mode | `toolCalling` is false in `chatLanguageModels.json` |

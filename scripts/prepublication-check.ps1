@@ -139,6 +139,15 @@ $staleClaims = @(
     @{ Pattern = '\| `tools`, `functions`, `tool_choice` \| External interaction'
         Why     = 'client-side function tools are accepted'
     }
+    @{ Pattern = 'Rejected: tools, functions'
+        Why     = 'client-side function tools are accepted; only HOSTED tools are rejected'
+    }
+    @{ Pattern = '\| `max_output_tokens` \| 4096 \|'
+        Why     = 'raised to 32768; 4096 truncated real coding work'
+    }
+    @{ Pattern = '\| Message history \| 400 entries \|'
+        Why     = 'raised to 1000'
+    }
 )
 
 $staleFound = $false
