@@ -415,9 +415,7 @@ def test_item_level_id_and_status_are_tolerated(validator: Draft7Validator) -> N
 
 
 @pytest.mark.parametrize("part_type", ["input_image", "input_file", "input_audio"])
-def test_non_text_content_parts_are_rejected(
-    validator: Draft7Validator, part_type: str
-) -> None:
+def test_non_text_content_parts_are_rejected(validator: Draft7Validator, part_type: str) -> None:
     # The text-only boundary is unchanged by widening the shape. An attachment
     # must be REJECTED rather than silently dropped, so the caller knows the
     # model never saw it.
@@ -501,9 +499,5 @@ def test_tool_bounds_still_exist(validator: Draft7Validator) -> None:
         validator,
         valid_request(tools=[{"type": "function", "name": "x", "description": "y" * 32769}]),
     )
-    assert not is_valid(
-        validator, valid_request(tools=[{"type": "function", "name": "x" * 129}])
-    )
-    assert not is_valid(
-        validator, valid_request(tools=[{"type": "function", "name": "has space"}])
-    )
+    assert not is_valid(validator, valid_request(tools=[{"type": "function", "name": "x" * 129}]))
+    assert not is_valid(validator, valid_request(tools=[{"type": "function", "name": "has space"}]))

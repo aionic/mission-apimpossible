@@ -93,9 +93,7 @@ class ProxyConfig:
         """
         endpoint = (gateway_endpoint or os.environ.get("MAP_ENDPOINT", "")).strip()
         tenant = (tenant_id or os.environ.get("MAP_TENANT_ID", "")).strip()
-        scope_value = (
-            scope or os.environ.get("MAP_SCOPE", "")
-        ).strip()
+        scope_value = (scope or os.environ.get("MAP_SCOPE", "")).strip()
 
         missing = [
             name

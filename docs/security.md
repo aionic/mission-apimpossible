@@ -6,6 +6,47 @@ find the boundary anyway.
 
 ## Identity
 
+### Authorisation is separate from authentication
+
+These are different questions and conflating them was a real vulnerability
+here, so the distinction is stated first.
+
+**Authentication** establishes *who you are*: a delegated human, in the right
+tenant, using an approved client. **Authorisation** establishes *whether you
+may use this gateway*. An earlier version did only the first.
+
+The gap was subtle because the configuration looked right. `api_audience` was
+the Foundry resource — a Microsoft **first-party** resource — and Entra issues
+tokens for those to any authenticated principal, because issuance is not gated
+by RBAC on the model. In `brokered` mode the gateway calls the model with its
+own managed identity, so every member and B2B guest of the tenant could obtain
+inference they held no permission for. The client-application allowlist did not
+help: it filters **applications**, and the ones it held — Azure CLI, VS Code —
+are public first-party clients every tenant user already has.
+
+The fix is two independent layers:
+
+| Layer | Control | Failure mode |
+| --- | --- | --- |
+| Microsoft Entra | Dedicated application with `appRoleAssignmentRequired` | An unassigned user cannot obtain a token at all |
+| Gateway policy | `scp` must contain `required_scope` | `403 not_authorized` |
+
+The scope is matched against whole space-delimited entries, so
+`Responses.InvokeAnything` cannot satisfy `Responses.Invoke`.
+
+A Terraform precondition refuses `identity_mode = "brokered"` with an empty
+`required_scope`. The original gap was not a typo; it was a plausible
+configuration nobody flagged, and configuration that plausible needs a machine
+to object.
+
+> **Why `passthrough` never had this problem.** There the caller's own token
+> reaches Foundry, which performs its own RBAC check. `brokered` mode removes
+> that second, independent decision in exchange for eliminating the
+> direct-backend bypass — so it must supply an equivalent check of its own.
+
+**Revocation.** Remove someone from the enterprise application and their access
+ends immediately. There is no key to rotate and no copy to hunt down.
+
 ### Authentication
 
 The developer's own Microsoft Entra access token authenticates the request.

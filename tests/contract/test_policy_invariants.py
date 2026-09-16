@@ -434,3 +434,50 @@ def test_policy_expressions_avoid_disallowed_types(
         f"It fails asynchronously with no error message: {remedy}. "
         f"See D7 in docs/platform-validation.md."
     )
+
+
+def test_authorization_is_enforced_not_just_authentication() -> None:
+    """The gateway must check a positive scope value, not merely its presence.
+
+    This was a real HIGH-severity finding. Establishing that a caller is a
+    delegated human in the right tenant is AUTHENTICATION. When api_audience is
+    a Microsoft first-party resource, Entra issues such tokens to every member
+    and guest of the tenant - so in brokered mode, where the gateway calls the
+    model with its own managed identity, that was the whole tenant.
+
+    A presence check (`scp` is non-empty) is not authorisation. The VALUE must
+    be compared.
+    """
+    auth = policy_body(POLICY_DIR / "fragments" / "authentication.xml")
+
+    assert "map-required-scope" in auth, (
+        "authentication.xml does not reference map-required-scope. Without a "
+        "positive scope check the gateway authenticates callers but never "
+        "authorises them - see T19 in docs/threat-model.md."
+    )
+    assert "not_authorized" in auth, (
+        "There is no not_authorized rejection path. A failed authorisation "
+        "check must reject explicitly rather than falling through."
+    )
+    # Whole-entry matching: a substring test would let a longer scope name
+    # satisfy a shorter required one.
+    assert "Split(' ')" in auth or "Split(&quot; &quot;)" in auth, (
+        "The scope check must match whole space-delimited entries. A substring "
+        "match would accept 'Responses.InvokeAnything' for 'Responses.Invoke'."
+    )
+
+
+def test_brokered_mode_requires_a_scope_check() -> None:
+    """Terraform must refuse brokered mode with no authorisation check.
+
+    Brokered mode trades Foundry's independent RBAC decision for elimination of
+    the direct-backend bypass. Something has to replace that decision, and a
+    configuration that quietly omits it is exactly the shape of the original
+    vulnerability.
+    """
+    main_tf = (REPO_ROOT / "infra" / "main.tf").read_text(encoding="utf-8")
+
+    assert "authorization_guard" in main_tf, (
+        "infra/main.tf has no authorization_guard precondition."
+    )
+    assert "required_scope" in main_tf, "The guard does not reference required_scope."

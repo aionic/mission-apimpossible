@@ -53,14 +53,55 @@ Confirm against
 [availability](https://learn.microsoft.com/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure-region-availability)
 and [lifecycle](https://learn.microsoft.com/azure/foundry/openai/concepts/model-retirements).
 
-### Step 2 — Observe the token audience (gate G1)
+### Step 2 — Create the gateway application
 
-`api_audience` must be the audience that actually appears in a token — not a
-`.default` scope string copied from documentation.
+This is the control that decides **who may use the gateway**, and it must exist
+before the first deployment.
 
 ```powershell
 az login --tenant <tenant-id>
-$token = az account get-access-token --scope "https://ai.azure.com/.default" --query accessToken -o tsv
+.\scripts\create-gateway-app.ps1
+```
+
+It prints the two values to put in your tfvars. Add colleagues with
+`-AssignUser alice@contoso.com` or `-AssignGroup "AI Platform Users"`; you are
+always assigned yourself.
+
+**Why a dedicated application, rather than the Foundry audience.** The obvious
+configuration is to use the Foundry resource as the audience, so a caller's
+token is already the right shape. That is a Microsoft **first-party** resource,
+and Entra issues tokens for those to *any* authenticated principal — issuance
+is not gated by RBAC on the model. In brokered mode the gateway then calls the
+model with its own managed identity, so **every member and guest of your
+tenant** would get inference they hold no permission for, billed to your
+subscription.
+
+That was a real vulnerability in this repository, found by security review. See
+[T19](threat-model.md).
+
+The dedicated application closes it in two independent places:
+
+| Layer | What it does |
+| --- | --- |
+| Entra | `appRoleAssignmentRequired` — an unassigned user cannot obtain a token **at all** |
+| Gateway policy | Requires the specific scope, matched as a whole entry |
+
+A Terraform precondition refuses to deploy `identity_mode = "brokered"` with an
+empty `required_scope`, because the original gap was not a typo — it was a
+plausible configuration nobody flagged.
+
+Manage access afterwards in **Entra → Enterprise applications → Mission
+APIMpossible Gateway → Users and groups**. Removing someone there removes their
+access, immediately, with no key to rotate.
+
+### Step 2b — Observe the token audience (gate G1)
+
+Confirm the audience that actually appears in a token, rather than trusting a
+`.default` scope string.
+
+```powershell
+$appId = "<the app id printed above>"
+$token = az account get-access-token --scope "api://$appId/.default" --query accessToken -o tsv
 
 # Decode the payload locally. Do not paste a token into a web decoder.
 $payload = $token.Split('.')[1]
@@ -70,10 +111,16 @@ $payload = $payload.PadRight([int][Math]::Ceiling($payload.Length / 4) * 4, '=')
     Select-Object aud, tid, appid, azp, scp, idtyp
 ```
 
-Record `aud` → `api_audience`, and `appid`/`azp` → `allowed_client_app_ids`.
+`aud` should be `api://<app-id>` and `scp` should contain `Responses.Invoke`.
+Record `appid`/`azp` → `allowed_client_app_ids`.
 
 > Decode locally. Pasting a live token into an online decoder hands someone
 > your identity.
+
+> If this fails with `AADSTS65001` (consent required), the client you are using
+> is not pre-authorised. Re-run `create-gateway-app.ps1 -PreAuthorizeClient` with
+> its application ID. A custom API needs this; a first-party audience did not,
+> which is part of why the original mistake looked correct.
 
 ### Step 3 — Configure
 
