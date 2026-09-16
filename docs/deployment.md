@@ -739,3 +739,44 @@ be proven not to reopen access.
 Deployment fails closed until an operator selects and records a tuple verified
 against current availability, new-deployment eligibility, quota, and residency
 requirements. See gate G11.
+
+---
+
+## Lifecycle, proven
+
+Both patterns have been deployed, verified and destroyed independently.
+
+| | Public | Private |
+| --- | --- | --- |
+| Fresh apply | 41 resources | 64 resources |
+| Repeat apply | no changes | `No changes`, public access still `Disabled` |
+| Destroy | 41 destroyed, resource group gone | 33 destroyed, resource group gone |
+| Soft-deleted remnants | none | none |
+
+**One thing blocks teardown, and it is not yours.** Application Insights
+auto-provisions a Smart Detector alert rule named
+`Failure Anomalies - <name>`. No Terraform resource declares it and no provider
+flag prevents it, so `terraform destroy` removes everything it owns and then
+fails on the last step:
+
+```text
+Error: deleting Resource Group "rg-...": the Resource Group still contains Resources.
+```
+
+The message never names the offending resource. `scripts/predown.ps1` removes
+it and runs automatically as an azd `predown` hook, so this only bites if you
+call `terraform destroy` directly.
+
+### What survives, deliberately
+
+The **gateway application** created in step 2 is not infrastructure and is not
+destroyed. It is an identity artifact holding your list of authorised people,
+and its lifetime should follow your access-management process, not a
+demonstration environment's. Redeploying reuses it; `create-gateway-app.ps1` is
+idempotent.
+
+Remove it manually when you are finished with the pattern entirely:
+
+```powershell
+az ad app delete --id <app-id>
+```

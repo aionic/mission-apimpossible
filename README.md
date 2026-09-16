@@ -59,6 +59,7 @@ not be proven, it says so.
 | Prompts are never logged | Canary phrases absent from all telemetry — checked alongside a record count, because an empty search proves nothing if logging is broken |
 | No key exists in the path | Local key auth disabled on the model at creation; no subscription keys issued |
 | Developers cannot bypass the gateway | Direct call to the model returns `401` even for an authorized user; through the gateway returns `200` |
+| Only authorised people can use it | A token for the wrong audience returns `401`; Entra refuses to issue one at all to an unassigned user |
 | Nothing sensitive is stored in infrastructure state | 23 resources audited field by field, zero findings |
 | It works in a real IDE | GitHub Copilot agent mode, tool calling, against a Foundry model |
 
@@ -83,11 +84,21 @@ roles, and quota for a supported model.
 git clone <this repository>
 cd mission-apimpossible
 
+# 1. Create the application that decides who may use the gateway.
+#    Prints the two values to paste into your tfvars.
+az login --tenant <your-tenant-id>
+.\scripts\create-gateway-app.ps1
+
+# 2. Configure and deploy.
 azd env new map-public
 azd env set DEPLOYMENT_PROFILE public
-# fill in subscription, tenant, region, and model in infra/profiles/public.tfvars
+# fill in subscription, tenant, region, model, and the two values from step 1
 azd up
 ```
+
+Step 1 is not optional. Without it the gateway would accept anyone your
+identity provider will issue a token to — which, with a Microsoft first-party
+audience, is your entire tenant. Terraform refuses to deploy without it.
 
 Then, from Python:
 

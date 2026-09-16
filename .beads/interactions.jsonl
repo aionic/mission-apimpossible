@@ -22,3 +22,5 @@
 {"id":"int-3a06c061","kind":"field_change","created_at":"2026-09-15T21:27:00.9940759Z","actor":"aionic","issue_id":"map-3yv","extra":{"field":"status","new_value":"closed","old_value":"open"}}
 {"id":"int-a0e67084","kind":"field_change","created_at":"2026-09-15T21:27:02.6700269Z","actor":"aionic","issue_id":"map-41a","extra":{"field":"status","new_value":"closed","old_value":"open"}}
 {"id":"int-edfc3ef7","kind":"field_change","created_at":"2026-09-15T21:27:28.211425Z","actor":"aionic","issue_id":"map-33o","extra":{"field":"status","new_value":"closed","old_value":"open"}}
+{"id":"int-b6507e46","kind":"field_change","created_at":"2026-09-16T00:49:22.9126282Z","actor":"aionic","issue_id":"map-p12","extra":{"field":"status","new_value":"closed","old_value":"open"}}
+{"id":"int-9fd9f11a","kind":"field_change","created_at":"2026-09-16T00:49:25.0452139Z","actor":"aionic","issue_id":"map-p13","extra":{"field":"status","new_value":"closed","old_value":"open"}}
