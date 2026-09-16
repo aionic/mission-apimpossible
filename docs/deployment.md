@@ -25,7 +25,7 @@ Entra enforced and no keys anywhere.
 > **Read this first.** The public pattern does **not** prevent a developer with
 > inference RBAC from calling Foundry directly and bypassing every gateway
 > control. That is an accepted, documented residual risk. If you need it
-> prevented, use [`deployment.md`](deployment.md).
+> prevented, use the **private pattern** below.
 
 ### Prerequisites
 
@@ -301,7 +301,7 @@ custom subdomain and block redeploying under the same name.
 
 The pattern that actually prevents the direct-backend bypass.
 
-Everything from [`deployment.md`](deployment.md) applies —
+Everything from the **public pattern** above applies —
 prerequisites, choosing a model, observing the token audience. This document
 covers only what differs.
 
@@ -321,7 +321,7 @@ covers only what differs.
 - Non-overlapping address space (default `10.42.0.0/16`)
 - **Either** existing VPN/ExpressRoute + DNS forwarding, **or**
   `enable_test_access = true`
-- A decision on [gate G4](deployment.md) if using the jumpbox
+- A decision on [gate G4](platform-validation.md) if using the jumpbox
 - Region supporting APIM Standard v2, **both** private endpoint types, and
   private-endpoint NSG enforcement
 
@@ -480,8 +480,8 @@ created them.
 | **Direct model call succeeds** | **Regression.** Check `private_endpoint_network_policies = "NetworkSecurityGroupEnabled"` and NSG rule priorities |
 | APIM provisioning fails | Integration subnet not delegated to `Microsoft.Web/serverFarms`, or smaller than `/27` |
 | Public access re-enabled after apply | Two owners for the property — the AzureRM resource must ignore it |
-| Bastion Entra option missing | SKU below Standard, or extension not provisioned. See [gate G4](deployment.md) |
-| Terraform fails on `acknowledge_unresolved_g4` | Working as intended. Read [`deployment.md`](deployment.md) |
+| Bastion Entra option missing | SKU below Standard, or extension not provisioned. See [gate G4](platform-validation.md) |
+| Terraform fails on `acknowledge_unresolved_g4` | Working as intended. Read [gate G4](platform-validation.md) |
 
 
 ---
