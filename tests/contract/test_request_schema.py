@@ -206,9 +206,21 @@ def test_input_is_required(validator: Draft7Validator) -> None:
     assert not is_valid(validator, {"model": APPROVED_MODEL, "store": False})
 
 
-@pytest.mark.parametrize("value", [0, -1, 4097, 100000])
+@pytest.mark.parametrize("value", [0, -1, 32769, 100000])
 def test_max_output_tokens_bounds(validator: Draft7Validator, value: int) -> None:
     assert not is_valid(validator, valid_request(max_output_tokens=value))
+
+
+def test_a_realistic_coding_output_budget_is_accepted(
+    validator: Draft7Validator,
+) -> None:
+    """4096 was too low for an agent writing a file.
+
+    Hitting the ceiling truncates the answer rather than failing visibly, which
+    is the worst of both: the caller gets something that looks like a complete
+    response and is not.
+    """
+    assert is_valid(validator, valid_request(max_output_tokens=16384))
 
 
 @pytest.mark.parametrize("value", [-0.1, 2.1])

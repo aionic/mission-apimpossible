@@ -67,6 +67,12 @@ apim_publisher_email = "" # team alias, not a personal address
 
 # Operational safeguards, not billing controls. Azure Cost Management remains
 # the financial source of truth.
+# Sizing guidance, including how per-user limits and shared model capacity
+# scale differently: docs/api-contract.md, "Recommended configuration".
+#
+# These per-user limits are keyed on tid:oid, so adding developers does NOT
+# consume them faster. model_capacity above is the shared one, and it is what
+# actually runs out as a team grows.
 tokens_per_minute                = 200000
 daily_token_quota                = 5000000
 max_concurrent_requests_per_user = 4

@@ -28,7 +28,7 @@ requires a documented threat model. That is the whole point.
 | `instructions` | string | 8 KiB | Optional. |
 | `stream` | boolean | — | SSE, forwarded unbuffered. |
 | `store` | boolean | must be `false` | Rejected if `true`; injected if omitted. |
-| `max_output_tokens` | integer | 1–4096 | Model may impose lower. |
+| `max_output_tokens` | integer | 1–32768 | The model imposes its own, usually lower, ceiling. |
 | `temperature` | number | 0–2 | Omit for reasoning models. |
 | `top_p` | number | 0–1 | Optional. |
 | `reasoning.effort` | enum | — | `minimal`/`low`/`medium`/`high`. |
@@ -87,6 +87,61 @@ Rejecting explicit `true` rather than rewriting it is deliberate: silently
 flipping a developer's stated intent hides a security-relevant decision from
 them.
 
+## Recommended configuration
+
+The defaults suit one developer evaluating the pattern. Adopting it for a team
+means changing two things that are easy to confuse, because they scale
+differently.
+
+**Per-user limits are per person.** `tokens_per_minute` and
+`daily_token_quota` are keyed on `tid:oid`, so adding developers does not
+consume them faster. They bound what *one* person can do.
+
+**Model capacity is shared.** The deployment's TPM is consumed by everyone at
+once. This is what actually runs out as a team grows, and when it does, Foundry
+throttles — not the gateway.
+
+Sizing from a measured agent turn of roughly 30,000 tokens:
+
+| | Per-user TPM | Daily quota | Concurrent | Model capacity |
+| --- | --- | --- | --- | --- |
+| **One developer, evaluating** | 200,000 | 5,000,000 | 4 | 100 |
+| **Small team, 5–10** | 200,000 | 5,000,000 | 4 | 500 |
+| **Team, 25–50** | 200,000 | 10,000,000 | 6 | 1,000+ |
+
+Reasoning behind those numbers:
+
+- **200,000 TPM per user** allows roughly six agent turns a minute. A developer
+  working steadily sustains far less; the headroom absorbs bursts, which is
+  what actually happens when an agent chains tool calls.
+- **Model capacity 500** is about 500,000 TPM shared. At a sustained ~60,000
+  TPM per active developer that supports around eight working simultaneously —
+  not eight *enrolled*, eight actively mid-request.
+- **Daily quota** at 5,000,000 is roughly 160 agent turns. Raise it before
+  raising per-minute limits; hitting a daily ceiling mid-afternoon is a worse
+  experience than a brief throttle.
+- **Concurrency of 4** is a coarse guard and it **overshoots**, because the
+  counter is per gateway node. Treat it as approximate; see gate G5.
+
+Check your quota before raising capacity:
+
+```powershell
+az cognitiveservices usage list -l <region> `
+  --query "[?contains(name.value,'<model>')].{name:name.localizedValue,used:currentValue,limit:limit}" -o table
+```
+
+**`max_output_tokens` deserves thought.** The gateway permits up to 32,768. A
+coding agent writing a file needs several thousand; the original 4,096 ceiling
+truncated answers rather than failing visibly, which is the worst outcome — the
+caller receives something that looks complete and is not. Set it as low as the
+work allows, because it directly bounds cost per request, but do not set it
+below what a real task needs.
+
+**What not to tune.** The size bounds and the tool limits were measured from
+real IDE traffic, not chosen. Lowering them will reject legitimate requests;
+the original conservative values rejected every GitHub Copilot request that
+reached them. Raise them only if a client genuinely needs more.
+
 ## Size limits
 
 | Limit | Value | Reason |
@@ -96,7 +151,7 @@ them.
 | Message array | 400 entries | Bounds client-side history replay. |
 | `tools` | 128 entries | An IDE sends its whole catalogue; 88–90 measured. |
 | Tool description | 32 KiB | Longest measured: 5,859 characters. |
-| `max_output_tokens` | 4096 | Bounds cost per request. |
+| `max_output_tokens` | 32768 | Bounds cost per request. 4096 truncated real coding work. |
 
 The documented ceilings conflict — `validate-content` permits 4 MB, the gateway
 runtime table lists 100 KiB for validated bodies, and v2 has a separate 2 MiB
@@ -131,8 +186,10 @@ Management is the financial source of truth.
 | Missing bearer token | 401 |
 | Invalid, expired, or wrong-audience token | 401 |
 | **Wrong tenant** | **401** |
-| App-only token or unapproved client application | 403 |
-| Valid human without Foundry RBAC | 403 |
+| App-only token or unapproved client application | 403 `not_delegated_identity` / `unapproved_client` |
+| Valid human not authorised for this gateway | 403 `not_authorized` |
+| Valid human without Foundry RBAC | 403 — **`passthrough` mode only.** In `brokered` mode no human holds RBAC, so entitlement is decided by the gateway instead |
+| Hosted tool requested | 400 `hosted_tool_not_permitted` |
 | Malformed body, unknown field, `store:true`, oversized | 400 |
 | Unapproved model | 400 |
 | Per-user TPM exceeded | 429 + `Retry-After` |

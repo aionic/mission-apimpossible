@@ -163,10 +163,10 @@
       "const": false
     },
     "max_output_tokens": {
-      "description": "Bounded output. The deployed model may impose a lower ceiling.",
+      "description": "Bounded output. 4096 was too low for real work: an agent writing a file or a substantial refactor needs more, and hitting the ceiling truncates the answer rather than failing visibly. The gateway bound is generous; the deployed model imposes its own, usually lower, and that is the one that will actually bite. Cost per request is bounded by this multiplied by the model rate.",
       "type": "integer",
       "minimum": 1,
-      "maximum": 4096
+      "maximum": 32768
     },
     "temperature": {
       "description": "Only forwarded when the approved model supports it. Reasoning models reject this field; the client should omit it.",
